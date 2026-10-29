@@ -14,13 +14,13 @@
         "description": "压缩触发字符数",
         "hint": "历史文本超过该长度才压缩旧对话；默认 58000，对应约 32000 Token（按字符×0.55估算）。",
         "type": "int",
-        "default": 58000
+        "default": 70000
       },
       "threshold_tokens": {
         "description": "压缩触发估算 Token",
         "hint": "按字符数×0.55粗略估算，不调用分词器；默认 32000。",
         "type": "int",
-        "default": 32000
+        "default": 38000
       },
       "keep_recent_turns": {
         "description": "保留最近轮数",
@@ -61,9 +61,9 @@
     "items": {
       "ttl_minutes": {
         "description": "工具调用保留分钟数",
-        "hint": "历史消息带时间戳时才按时间判断；没有时间戳时按保留对数处理。",
+        "hint": "历史消息带时间戳时才按时间判断；没有时间戳时按保留对数处理。活跃期间不清理。",
         "type": "int",
-        "default": 10
+        "default": 60
       },
       "keep_recent_pairs": {
         "description": "保留最近工具调用对数",
