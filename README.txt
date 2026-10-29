@@ -44,6 +44,7 @@ persistent:
   allow: false
   require_admin: true
   admin_ids: []
+  admin_names: []
   require_confirmation: true
   encrypt_backups: true
   allow_legacy_plaintext_backups: false
@@ -52,7 +53,8 @@ persistent:
   backup_retention_days: 15
 ```
 
-- `admin_ids` 非空时只允许这些发送者，优先级高于 `is_admin`
+- `admin_ids` / `admin_names` 非空时，任一命中即可执行；名称区分大小写
+- 两者都为空时回退 AstrBot 的 `is_admin()`
 - `require_confirmation` 开启时必须 `/节省上下文 run confirm`
 - 备份默认 AES-GCM 加密，密钥保存在插件数据目录并限制为 600
 - 默认拒绝恢复旧明文 `.json` 备份
