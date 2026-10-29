@@ -81,6 +81,7 @@ class ContextHygiene(Star):
         self._recent_tools: dict[str, dict[str, float]] = {}
         self._last_admin_action: dict[str, float] = {}
         self._context_cache: dict[str, tuple[str, int, list[dict]]] = {}
+        self._last_request_at: dict[str, float] = {}
 
     def _cfg(self, key: str, default):
         if key in self._flat:
@@ -295,20 +296,35 @@ class ContextHygiene(Star):
                 self._context_cache.pop(umo, None)
         return cleaned, stats
 
+    def _cache_guard_active(self, umo: str, now: float) -> bool:
+        minutes = max(0, as_int(self._cfg("cache_guard_minutes", 15), 15))
+        if minutes <= 0:
+            return False
+        last = self._last_request_at.get(umo)
+        return bool(last and now - last < minutes * 60)
+
     @filter.on_llm_request()
     async def filter_request(self, event: AstrMessageEvent, req: ProviderRequest) -> None:
         """Clean only the request copy.  The stored conversation is untouched."""
         if not self._enabled():
             return
         try:
+            umo = str(getattr(event, "unified_msg_origin", "") or "")
+            now = time.time()
+            active = self._cache_guard_active(umo, now)
+            self._last_request_at[umo] = now
+            if len(self._last_request_at) > 32:
+                self._last_request_at.pop(next(iter(self._last_request_at)))
+            if active:
+                # Do not rewrite a warm prompt-cache prefix during an active
+                # conversation.  Cleanup runs once after the guard expires.
+                return
             self._maybe_cleanup_backups()
             self._apply_tool_policy(event, req)
             contexts = getattr(req, "contexts", None)
             if not isinstance(contexts, list) or not contexts:
                 return
-            cleaned, stats = self._clean_contexts_cached(
-                str(getattr(event, "unified_msg_origin", "") or ""), contexts
-            )
+            cleaned, stats = self._clean_contexts_cached(umo, contexts)
             if stats.changed:
                 req.contexts = cleaned
                 logger.info(

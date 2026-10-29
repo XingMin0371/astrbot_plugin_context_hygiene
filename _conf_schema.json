@@ -27,6 +27,12 @@
         "hint": "最近 N 轮不压缩、不替换图片；工具调用另受保留数量控制。",
         "type": "int",
         "default": 15
+      },
+      "cache_guard_minutes": {
+        "description": "活跃缓存保护（分钟）",
+        "hint": "最近 N 分钟内有请求时跳过清理；空闲后再做一次完整清理。0 表示关闭。",
+        "type": "int",
+        "default": 15
       }
     }
   },
@@ -237,9 +243,9 @@
       },
       "cache_prefix_messages": {
         "description": "保留前缀消息数",
-        "hint": "cache_friendly 开启时，前 N 条消息保持原样。",
+        "hint": "cache_friendly 开启时，前 N 条消息保持原样；建议 100-200。",
         "type": "int",
-        "default": 4
+        "default": 150
       }
     }
   },
