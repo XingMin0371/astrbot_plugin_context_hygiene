@@ -26,7 +26,7 @@
         "description": "保留最近轮数",
         "hint": "最近 N 轮不压缩、不替换图片；工具调用另受保留数量控制。",
         "type": "int",
-        "default": 8
+        "default": 10
       }
     }
   },

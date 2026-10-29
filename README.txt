@@ -108,7 +108,7 @@ data/plugin_data/astrbot_plugin_context_hygiene/backups/
 enabled: true
 threshold_chars: 60000
 threshold_tokens: 24000
-keep_recent_turns: 8
+keep_recent_turns: 10
 
 reminder:
   dedupe: true

@@ -69,7 +69,7 @@ DEFAULTS: dict[str, Any] = {
     "enabled": True,
     "threshold_chars": 60000,
     "threshold_tokens": 24000,
-    "keep_recent_turns": 8,
+    "keep_recent_turns": 10,
     "reminder.dedupe": True,
     "reminder.keep_latest": True,
     "tools.ttl_minutes": 10,
@@ -262,7 +262,7 @@ def clean_reminders(messages: list[dict], cfg: Any, stats: CleanStats) -> None:
 
 
 def _old_cutoff(messages: list[dict], cfg: Any) -> int:
-    keep_turns = max(0, as_int(get_cfg(cfg, "keep_recent_turns", 8), 8))
+    keep_turns = max(0, as_int(get_cfg(cfg, "keep_recent_turns", 10), 10))
     return max(0, len(messages) - keep_turns * 2)
 
 
@@ -415,7 +415,7 @@ def clean_tools(messages: list[dict], cfg: Any, stats: CleanStats) -> None:
     remove_orphan = as_bool(get_cfg(cfg, "tools.remove_orphan", True), True)
     summarize = as_bool(get_cfg(cfg, "tools.summarize_long", False), False)
     max_result_chars = max(200, as_int(get_cfg(cfg, "tools.max_result_chars", 4000), 4000))
-    keep_turns = max(0, as_int(get_cfg(cfg, "keep_recent_turns", 8), 8))
+    keep_turns = max(0, as_int(get_cfg(cfg, "keep_recent_turns", 10), 10))
     recent_cutoff = max(0, len(messages) - keep_turns * 2)
     cutoff = datetime.now(timezone.utc).timestamp() - ttl_minutes * 60 if ttl_minutes else None
 
@@ -510,7 +510,7 @@ def _image_label(part: dict, max_chars: int) -> str:
 def clean_images(messages: list[dict], cfg: Any, stats: CleanStats) -> None:
     if not as_bool(get_cfg(cfg, "images.clean_old", True), True):
         return
-    keep_turns = max(0, as_int(get_cfg(cfg, "keep_recent_turns", 8), 8))
+    keep_turns = max(0, as_int(get_cfg(cfg, "keep_recent_turns", 10), 10))
     cutoff = max(0, len(messages) - keep_turns * 2)
     start = _cache_start(cfg)
     placeholder = str(get_cfg(cfg, "images.placeholder", "[图片已省略]"))
@@ -575,7 +575,7 @@ def compress_old(messages: list[dict], cfg: Any, stats: CleanStats, before_chars
     if before_chars < min_chars:
         return
     ratio = max(0.05, min(0.9, as_float(get_cfg(cfg, "compression.keep_ratio", 0.28), 0.28)))
-    keep_turns = max(1, as_int(get_cfg(cfg, "keep_recent_turns", 8), 8))
+    keep_turns = max(1, as_int(get_cfg(cfg, "keep_recent_turns", 10), 10))
     cutoff = max(0, len(messages) - keep_turns * 2)
     cache_friendly = as_bool(get_cfg(cfg, "compression.cache_friendly", True), True)
     cache_prefix = max(0, as_int(get_cfg(cfg, "compression.cache_prefix_messages", 4), 4))
