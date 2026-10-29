@@ -109,7 +109,7 @@ enabled: true
 threshold_chars: 58000
 threshold_tokens: 32000
 keep_recent_turns: 15
-cache_guard_minutes: 15
+cache_guard_minutes: 20
 
 reminder:
   dedupe: true
@@ -149,7 +149,7 @@ persistent:
 
 ### 活跃缓存保护
 
-`cache_guard_minutes: 15` 表示最近 15 分钟内有请求时跳过旧上下文清理和工具消息清理；空闲后再做一次完整清理。
+`cache_guard_minutes: 20` 表示最近 20 分钟内有请求时跳过旧上下文清理和工具消息清理；空闲后再做一次完整清理。
 
 `cache_prefix_messages: 150` 表示前 150 条消息不参与压缩/去重/图片替换/工具裁剪，尽量保持 Prompt Cache 前缀稳定。
 
