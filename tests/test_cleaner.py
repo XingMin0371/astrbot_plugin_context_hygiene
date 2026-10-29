@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from cleaner import clean_history  # noqa: E402
+from cleaner import clean_history, _compress_text  # noqa: E402
 
 
 def base_cfg(**extra):
@@ -195,6 +195,12 @@ class CleanerTests(unittest.TestCase):
         self.assertGreaterEqual(stats.messages_compressed, 1)
         self.assertIn("历史内容已压缩", str(out[0]))
         self.assertEqual(out[-1]["content"], recent)
+
+    def test_compression_is_idempotent(self):
+        text = "很长的旧内容" * 500
+        once = _compress_text(text, 0.35)
+        twice = _compress_text(once, 0.35)
+        self.assertEqual(once, twice)
 
 
 if __name__ == "__main__":
