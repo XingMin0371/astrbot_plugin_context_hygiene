@@ -14,19 +14,19 @@
         "description": "压缩触发字符数",
         "hint": "历史文本超过该长度才压缩旧对话；0 表示每次满足最小长度就压缩。",
         "type": "int",
-        "default": 60000
+        "default": 84000
       },
       "threshold_tokens": {
         "description": "压缩触发估算 Token",
         "hint": "按字符数/3 粗略估算，不调用分词器。",
         "type": "int",
-        "default": 24000
+        "default": 28000
       },
       "keep_recent_turns": {
         "description": "保留最近轮数",
         "hint": "最近 N 轮不压缩、不替换图片；工具调用另受保留数量控制。",
         "type": "int",
-        "default": 10
+        "default": 15
       }
     }
   },
@@ -298,7 +298,7 @@
       "command_cooldown_seconds": {
         "description": "持久命令冷却秒数",
         "type": "int",
-        "default": 30
+        "default": 60
       },
       "backup_retention_days": {
         "description": "逻辑备份保留天数",
