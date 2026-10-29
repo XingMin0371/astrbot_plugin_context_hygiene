@@ -1,0 +1,304 @@
+{
+  "basic": {
+    "description": "基础设置",
+    "hint": "默认只清理本轮请求，不写会话数据库。",
+    "type": "object",
+    "items": {
+      "enabled": {
+        "description": "启用节省上下文",
+        "hint": "关闭后所有自动和手动清理都停止。",
+        "type": "bool",
+        "default": true
+      },
+      "threshold_chars": {
+        "description": "压缩触发字符数",
+        "hint": "历史文本超过该长度才压缩旧对话；0 表示每次满足最小长度就压缩。",
+        "type": "int",
+        "default": 60000
+      },
+      "threshold_tokens": {
+        "description": "压缩触发估算 Token",
+        "hint": "按字符数/3 粗略估算，不调用分词器。",
+        "type": "int",
+        "default": 24000
+      },
+      "keep_recent_turns": {
+        "description": "保留最近轮数",
+        "hint": "最近 N 轮不压缩、不替换图片；工具调用另受保留数量控制。",
+        "type": "int",
+        "default": 8
+      }
+    }
+  },
+  "reminder": {
+    "description": "system_reminder",
+    "hint": "只处理历史中的提醒块，当前消息保留最新一条。",
+    "type": "object",
+    "items": {
+      "dedupe": {
+        "description": "去重历史提醒",
+        "type": "bool",
+        "default": true
+      },
+      "keep_latest": {
+        "description": "保留当前消息最新提醒",
+        "hint": "关闭后当前消息的提醒也可能被移除，不建议关闭。",
+        "type": "bool",
+        "default": true
+      }
+    }
+  },
+  "tools": {
+    "description": "工具调用",
+    "hint": "只处理完整调用对，避免留下孤立 tool 消息。",
+    "type": "object",
+    "items": {
+      "ttl_minutes": {
+        "description": "工具调用保留分钟数",
+        "hint": "历史消息带时间戳时才按时间判断；没有时间戳时按保留对数处理。",
+        "type": "int",
+        "default": 10
+      },
+      "keep_recent_pairs": {
+        "description": "保留最近工具调用对数",
+        "type": "int",
+        "default": 3
+      },
+      "remove_orphan": {
+        "description": "删除孤立 tool 消息",
+        "hint": "没有对应 tool_call 的结果会清理；关闭后保留。",
+        "type": "bool",
+        "default": true
+      },
+      "summarize_long": {
+        "description": "截断超长工具结果",
+        "hint": "默认关闭；开启后只做确定性截断，不调用模型。",
+        "type": "bool",
+        "default": false
+      },
+      "max_result_chars": {
+        "description": "工具结果最大字符数",
+        "type": "int",
+        "default": 4000
+      },
+      "cleanup": {
+        "description": "工具定义清理",
+        "hint": "默认清理所有工具；不改参数 schema 和 handler。",
+        "type": "object",
+        "items": {
+          "enabled": {
+            "description": "启用工具定义清理",
+            "type": "bool",
+            "default": true
+          },
+          "mode": {
+            "description": "清理模式",
+            "hint": "weak 只去 inactive/重复/空白；strong 额外截断超长描述。",
+            "type": "string",
+            "options": [
+              "weak",
+              "strong"
+            ],
+            "default": "weak"
+          },
+          "remove_inactive": {
+            "description": "移除 inactive 工具",
+            "type": "bool",
+            "default": true
+          },
+          "normalize_whitespace": {
+            "description": "清理工具描述空白",
+            "type": "bool",
+            "default": true
+          },
+          "deduplicate": {
+            "description": "按工具名去重",
+            "type": "bool",
+            "default": true
+          },
+          "strong": {
+            "description": "强力清理参数",
+            "hint": "仅在 mode=strong 时生效；默认只截断官方工具描述。",
+            "type": "object",
+            "items": {
+              "max_description_chars": {
+                "description": "工具描述最大字符数",
+                "type": "int",
+                "default": 1200
+              },
+              "protected_tool_patterns": {
+                "description": "受保护工具关键词",
+                "hint": "名称或描述命中这些词的工具不截断描述。",
+                "type": "list",
+                "default": [
+                  "memory",
+                  "remember",
+                  "记忆",
+                  "日记",
+                  "rag"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "gating": {
+        "description": "官方工具门控",
+        "hint": "独立功能：按消息内容只提供相关官方工具；第三方插件工具永远保留。",
+        "type": "object",
+        "items": {
+          "enabled": {
+            "description": "启用官方工具门控",
+            "type": "bool",
+            "default": false
+          },
+          "fallback_all": {
+            "description": "不确定时保留全部官方工具",
+            "hint": "建议保持开启。",
+            "type": "bool",
+            "default": true
+          },
+          "keep_recent_minutes": {
+            "description": "保留最近使用工具分钟数",
+            "type": "int",
+            "default": 10
+          },
+          "official_tool_names": {
+            "description": "官方工具补充白名单",
+            "hint": "除了这里列出的名字，还会根据 handler 模块路径自动识别 astrbot.core/builtin_stars 工具；不要填第三方插件工具。",
+            "type": "list",
+            "default": [
+              "astrbot_execute_shell",
+              "astrbot_execute_python",
+              "astrbot_execute_ipython",
+              "astrbot_execute_browser",
+              "astrbot_execute_browser_batch"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "images": {
+    "description": "图片",
+    "hint": "只替换旧上下文中的图片引用，不删除原始文件。",
+    "type": "object",
+    "items": {
+      "clean_old": {
+        "description": "替换旧图片",
+        "type": "bool",
+        "default": true
+      },
+      "placeholder": {
+        "description": "无标签时的图片占位文本",
+        "type": "string",
+        "default": "[图片已省略]"
+      },
+      "keep_labels": {
+        "description": "保留图片短标签",
+        "hint": "从 alt/caption/emotion/tag 等字段提取 2-4 字标签。",
+        "type": "bool",
+        "default": true
+      },
+      "max_label_chars": {
+        "description": "图片标签最大字符数",
+        "hint": "限制在 2-4 字符。",
+        "type": "int",
+        "default": 4
+      }
+    }
+  },
+  "compression": {
+    "description": "旧对话压缩",
+    "hint": "默认使用确定性首尾截断，不调用模型，不产生额外 Token。",
+    "type": "object",
+    "items": {
+      "enabled": {
+        "description": "启用旧对话压缩",
+        "type": "bool",
+        "default": true
+      },
+      "keep_ratio": {
+        "description": "旧文本保留比例",
+        "hint": "0.30 表示压缩到约 30%；最近 N 轮不受影响。",
+        "type": "float",
+        "default": 0.28
+      },
+      "min_chars": {
+        "description": "最小压缩长度",
+        "type": "int",
+        "default": 12000
+      },
+      "cache_friendly": {
+        "description": "保留前缀以利用 Prompt Cache",
+        "hint": "开启后最前面的消息不参与压缩/去重/图片替换/工具裁剪，减少缓存前缀变化。",
+        "type": "bool",
+        "default": true
+      },
+      "cache_prefix_messages": {
+        "description": "保留前缀消息数",
+        "hint": "cache_friendly 开启时，前 N 条消息保持原样。",
+        "type": "int",
+        "default": 4
+      }
+    }
+  },
+  "persistent": {
+    "description": "持久清理（高风险）",
+    "hint": "默认关闭；只通过 ConversationManager 官方 API 写入，并先做逻辑备份。",
+    "type": "object",
+    "items": {
+      "allow": {
+        "description": "允许持久清理",
+        "hint": "关闭时只做每轮请求过滤；开启后管理员才能执行 run/restore。",
+        "type": "bool",
+        "default": false
+      },
+      "require_admin": {
+        "description": "仅管理员执行",
+        "type": "bool",
+        "default": true
+      },
+      "admin_ids": {
+        "description": "显式管理员账号",
+        "hint": "非空时只允许这些发送者执行持久命令，优先级高于 is_admin。",
+        "type": "list",
+        "default": []
+      },
+      "require_confirmation": {
+        "description": "持久清理需要确认",
+        "hint": "开启后必须使用 /节省上下文 run confirm。",
+        "type": "bool",
+        "default": true
+      },
+      "encrypt_backups": {
+        "description": "加密逻辑备份",
+        "hint": "使用本地随机密钥 AES-GCM 加密；关闭后备份为明文 JSON。",
+        "type": "bool",
+        "default": true
+      },
+      "allow_legacy_plaintext_backups": {
+        "description": "允许恢复旧明文备份",
+        "hint": "默认关闭；开启后 restore 才接受旧的 .json 明文备份。",
+        "type": "bool",
+        "default": false
+      },
+      "audit_log": {
+        "description": "记录持久操作审计",
+        "hint": "只记录时间、发送者、会话、操作和统计，不记录消息正文。",
+        "type": "bool",
+        "default": true
+      },
+      "command_cooldown_seconds": {
+        "description": "持久命令冷却秒数",
+        "type": "int",
+        "default": 30
+      },
+      "backup_retention_days": {
+        "description": "逻辑备份保留天数",
+        "type": "int",
+        "default": 15
+      }
+    }
+  }
+}
