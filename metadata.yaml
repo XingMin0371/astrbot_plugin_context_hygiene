@@ -1,0 +1,13 @@
+name: astrbot_plugin_context_hygiene
+display_name: 节省上下文
+short_desc: 去重提醒、清理工具残留、压缩旧上下文，降低 Token 消耗
+desc: 每轮只修改发给模型的上下文副本，不去数据库删记录；清理重复 system_reminder、旧工具调用、孤立工具消息和旧图片，并在上下文过大时做无模型压缩。默认不写库，持久清理需要管理员显式开启。
+version: v1.1.8
+author: DSH
+repo: https://github.com/XingMin0371/astrbot_plugin_context_hygiene
+astrbot_version: ">=4.29.0"
+tags:
+  - context
+  - token
+  - memory
+  - astrbot-plugin
