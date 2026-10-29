@@ -297,7 +297,7 @@ class ContextHygiene(Star):
         return cleaned, stats
 
     def _cache_guard_active(self, umo: str, now: float) -> bool:
-        minutes = max(0, as_int(self._cfg("cache_guard_minutes", 15), 15))
+        minutes = max(0, as_int(self._cfg("cache_guard_minutes", 20), 20))
         if minutes <= 0:
             return False
         last = self._last_request_at.get(umo)

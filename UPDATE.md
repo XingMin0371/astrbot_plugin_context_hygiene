@@ -40,7 +40,7 @@
 - 前 150 条消息默认保持原样
 - 清理后的历史前缀缓存复用
 - 新消息只清理尾部
-- 最近 15 分钟内有请求时跳过旧上下文清理，空闲后完整清理一次
+- 最近 20 分钟内有请求时跳过旧上下文清理，空闲后完整清理一次
 - 活跃期间不清理工具消息
 - 前缀变化时缓存自动失效
 - 持久清理/恢复后主动清除缓存
@@ -61,7 +61,7 @@
 threshold_chars: 58000
 threshold_tokens: 32000
 keep_recent_turns: 15
-cache_guard_minutes: 15
+cache_guard_minutes: 20
 
 compression:
   keep_ratio: 0.35
