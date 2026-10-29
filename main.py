@@ -209,7 +209,7 @@ class ContextHygiene(Star):
 
         recent: list[str] = []
         umo = str(getattr(event, "unified_msg_origin", "") or "")
-        ttl_minutes = max(0, as_int(self._cfg("tools.gating.keep_recent_minutes", 10), 10))
+        ttl_minutes = max(0, as_int(self._cfg("tools.gating.keep_recent_minutes", 25), 25))
         if len(self._recent_tools) > 256:
             cutoff = time.time() - 86400
             for key in list(self._recent_tools):
