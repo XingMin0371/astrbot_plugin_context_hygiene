@@ -67,8 +67,8 @@ class CleanStats:
 
 DEFAULTS: dict[str, Any] = {
     "enabled": True,
-    "threshold_chars": 50000,
-    "threshold_tokens": 30000,
+    "threshold_chars": 58000,
+    "threshold_tokens": 32000,
     "keep_recent_turns": 15,
     "reminder.dedupe": True,
     "reminder.keep_latest": True,
@@ -166,7 +166,7 @@ def message_chars(message: Any) -> int:
 
 def estimate_tokens(chars: int) -> int:
     """Cheap, deliberately conservative estimate; no tokenizer dependency."""
-    return max(0, int(chars * 0.6))
+    return max(0, int(chars * 0.55))
 
 
 def _new_message(message: dict) -> dict:
@@ -570,8 +570,8 @@ def _compress_text(text: str, ratio: float) -> str:
 def compress_old(messages: list[dict], cfg: Any, stats: CleanStats, before_chars: int) -> None:
     if not as_bool(get_cfg(cfg, "compression.enabled", True), True):
         return
-    threshold_chars = max(500, as_int(get_cfg(cfg, "threshold_chars", 50000), 50000))
-    threshold_tokens = max(500, as_int(get_cfg(cfg, "threshold_tokens", 30000), 30000))
+    threshold_chars = max(500, as_int(get_cfg(cfg, "threshold_chars", 58000), 58000))
+    threshold_tokens = max(500, as_int(get_cfg(cfg, "threshold_tokens", 32000), 32000))
     if before_chars <= threshold_chars and estimate_tokens(before_chars) <= threshold_tokens:
         return
     min_chars = max(500, as_int(get_cfg(cfg, "compression.min_chars", 12000), 12000))

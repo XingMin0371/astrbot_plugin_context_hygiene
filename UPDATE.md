@@ -56,8 +56,8 @@
 面向 300–500 条/日消息的群聊：
 
 ```yaml
-threshold_chars: 50000
-threshold_tokens: 30000
+threshold_chars: 58000
+threshold_tokens: 32000
 keep_recent_turns: 15
 
 compression:

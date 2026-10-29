@@ -14,13 +14,13 @@
         "description": "压缩触发字符数",
         "hint": "历史文本超过该长度才压缩旧对话；0 表示每次满足最小长度就压缩。",
         "type": "int",
-        "default": 50000
+        "default": 58000
       },
       "threshold_tokens": {
         "description": "压缩触发估算 Token",
         "hint": "按字符数/3 粗略估算，不调用分词器。",
         "type": "int",
-        "default": 30000
+        "default": 32000
       },
       "keep_recent_turns": {
         "description": "保留最近轮数",
