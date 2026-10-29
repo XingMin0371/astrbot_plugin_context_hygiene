@@ -67,8 +67,8 @@ class CleanStats:
 
 DEFAULTS: dict[str, Any] = {
     "enabled": True,
-    "threshold_chars": 84000,
-    "threshold_tokens": 28000,
+    "threshold_chars": 50000,
+    "threshold_tokens": 30000,
     "keep_recent_turns": 15,
     "reminder.dedupe": True,
     "reminder.keep_latest": True,
@@ -80,7 +80,7 @@ DEFAULTS: dict[str, Any] = {
     "images.clean_old": True,
     "images.placeholder": "[图片已省略]",
     "compression.enabled": True,
-    "compression.keep_ratio": 0.28,
+    "compression.keep_ratio": 0.35,
     "compression.min_chars": 12000,
     "compression.cache_friendly": True,
     "compression.cache_prefix_messages": 4,
@@ -166,7 +166,7 @@ def message_chars(message: Any) -> int:
 
 def estimate_tokens(chars: int) -> int:
     """Cheap, deliberately conservative estimate; no tokenizer dependency."""
-    return max(0, chars // 3)
+    return max(0, int(chars * 0.6))
 
 
 def _new_message(message: dict) -> dict:
@@ -553,28 +553,31 @@ def clean_images(messages: list[dict], cfg: Any, stats: CleanStats) -> None:
             _set_content(message, new_parts)
 
 
+COMPRESS_MARKER = "...[历史内容已压缩]..."
+
+
 def _compress_text(text: str, ratio: float) -> str:
-    if not text or ratio >= 1:
+    if not text or ratio >= 1 or COMPRESS_MARKER in text:
         return text
     target = max(80, int(len(text) * max(0.05, min(ratio, 0.9))))
     if len(text) <= target:
         return text
     head = max(30, target * 2 // 3)
     tail = max(20, target - head - 12)
-    return f"{text[:head].rstrip()}\n...[历史内容已压缩]...\n{text[-tail:].lstrip()}"
+    return f"{text[:head].rstrip()}\n{COMPRESS_MARKER}\n{text[-tail:].lstrip()}"
 
 
 def compress_old(messages: list[dict], cfg: Any, stats: CleanStats, before_chars: int) -> None:
     if not as_bool(get_cfg(cfg, "compression.enabled", True), True):
         return
-    threshold_chars = max(500, as_int(get_cfg(cfg, "threshold_chars", 84000), 84000))
-    threshold_tokens = max(500, as_int(get_cfg(cfg, "threshold_tokens", 28000), 28000))
+    threshold_chars = max(500, as_int(get_cfg(cfg, "threshold_chars", 50000), 50000))
+    threshold_tokens = max(500, as_int(get_cfg(cfg, "threshold_tokens", 30000), 30000))
     if before_chars <= threshold_chars and estimate_tokens(before_chars) <= threshold_tokens:
         return
     min_chars = max(500, as_int(get_cfg(cfg, "compression.min_chars", 12000), 12000))
     if before_chars < min_chars:
         return
-    ratio = max(0.05, min(0.9, as_float(get_cfg(cfg, "compression.keep_ratio", 0.28), 0.28)))
+    ratio = max(0.05, min(0.9, as_float(get_cfg(cfg, "compression.keep_ratio", 0.35), 0.35)))
     keep_turns = max(1, as_int(get_cfg(cfg, "keep_recent_turns", 15), 15))
     cutoff = max(0, len(messages) - keep_turns * 2)
     cache_friendly = as_bool(get_cfg(cfg, "compression.cache_friendly", True), True)
