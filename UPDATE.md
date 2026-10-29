@@ -11,7 +11,7 @@
 ### 安全
 
 - 持久清理默认关闭
-- `admin_ids` 显式管理员白名单
+- `admin_ids` / `admin_names` 显式管理员白名单；名称区分大小写
 - `run confirm` / `restore confirm` 二次确认
 - 持久命令冷却
 - 本地审计日志，不记录消息正文

@@ -93,15 +93,27 @@ class ContextHygiene(Star):
     def _admin(self, event: AstrMessageEvent) -> bool:
         if not as_bool(self._cfg("persistent.require_admin", True), True):
             return True
-        configured = self._cfg("persistent.admin_ids", [])
-        if isinstance(configured, str):
-            configured = [x.strip() for x in configured.replace("，", ",").split(",") if x.strip()]
-        if isinstance(configured, (list, tuple, set)) and configured:
+        def values(key):
+            raw = self._cfg(key, [])
+            if isinstance(raw, str):
+                raw = [x.strip() for x in raw.replace("，", ",").split(",") if x.strip()]
+            if isinstance(raw, (list, tuple, set)):
+                return {str(x) for x in raw}
+            return set()
+
+        ids = values("persistent.admin_ids")
+        names = values("persistent.admin_names")
+        if ids or names:
             try:
-                sender = str(event.get_sender_id())
+                sender_id = str(event.get_sender_id())
             except (AttributeError, TypeError, ValueError):
-                return False
-            return sender in {str(x) for x in configured}
+                sender_id = ""
+            try:
+                sender_name = str(event.get_sender_name())
+            except (AttributeError, TypeError, ValueError):
+                sender_name = ""
+            # Names are intentionally case-sensitive.
+            return sender_id in ids or sender_name in names
         try:
             checker = getattr(event, "is_admin", None)
             if callable(checker):

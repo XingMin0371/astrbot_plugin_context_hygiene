@@ -260,8 +260,14 @@
         "default": true
       },
       "admin_ids": {
-        "description": "显式管理员账号",
-        "hint": "非空时只允许这些发送者执行持久命令，优先级高于 is_admin。",
+        "description": "显式管理员 ID",
+        "hint": "可选。与 admin_names 任一命中即可执行持久命令。",
+        "type": "list",
+        "default": []
+      },
+      "admin_names": {
+        "description": "显式管理员账号名称",
+        "hint": "区分大小写，使用发送者显示名；与 admin_ids 任一命中即可。",
         "type": "list",
         "default": []
       },
