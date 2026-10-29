@@ -130,7 +130,7 @@ class ContextHygiene(Star):
             return "unknown"
 
     def _check_cooldown(self, event: AstrMessageEvent) -> bool:
-        seconds = max(0, as_int(self._cfg("persistent.command_cooldown_seconds", 30), 30))
+        seconds = max(0, as_int(self._cfg("persistent.command_cooldown_seconds", 60), 60))
         if not seconds:
             return True
         sender = self._sender_id(event)

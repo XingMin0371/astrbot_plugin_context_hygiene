@@ -49,7 +49,7 @@ persistent:
   encrypt_backups: true
   allow_legacy_plaintext_backups: false
   audit_log: true
-  command_cooldown_seconds: 30
+  command_cooldown_seconds: 60
   backup_retention_days: 15
 ```
 
@@ -106,9 +106,9 @@ data/plugin_data/astrbot_plugin_context_hygiene/backups/
 
 ```yaml
 enabled: true
-threshold_chars: 60000
-threshold_tokens: 24000
-keep_recent_turns: 10
+threshold_chars: 84000
+threshold_tokens: 28000
+keep_recent_turns: 15
 
 reminder:
   dedupe: true
