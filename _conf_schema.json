@@ -12,13 +12,13 @@
       },
       "threshold_chars": {
         "description": "压缩触发字符数",
-        "hint": "历史文本超过该长度才压缩旧对话；0 表示每次满足最小长度就压缩。",
+        "hint": "历史文本超过该长度才压缩旧对话；默认 58000，对应约 32000 Token（按字符×0.55估算）。",
         "type": "int",
         "default": 58000
       },
       "threshold_tokens": {
         "description": "压缩触发估算 Token",
-        "hint": "按字符数/3 粗略估算，不调用分词器。",
+        "hint": "按字符数×0.55粗略估算，不调用分词器；默认 32000。",
         "type": "int",
         "default": 32000
       },
@@ -220,7 +220,7 @@
       },
       "keep_ratio": {
         "description": "旧文本保留比例",
-        "hint": "0.30 表示压缩到约 30%；最近 N 轮不受影响。",
+        "hint": "0.35 表示旧文本保留约 35%；最近 N 轮不受影响。",
         "type": "float",
         "default": 0.35
       },
