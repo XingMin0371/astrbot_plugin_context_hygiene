@@ -294,7 +294,7 @@ tools:
   gating:
     enabled: false
     fallback_all: true
-    keep_recent_minutes: 10
+    keep_recent_minutes: 25
     official_tool_names:
       - astrbot_execute_shell
       - astrbot_execute_python

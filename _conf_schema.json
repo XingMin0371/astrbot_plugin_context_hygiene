@@ -167,7 +167,8 @@
           "keep_recent_minutes": {
             "description": "保留最近使用工具分钟数",
             "type": "int",
-            "default": 10
+            "default": 25,
+            "hint": "最近使用过的官方工具继续保留的分钟数；建议 25-30，减少工具列表变化。"
           },
           "official_tool_names": {
             "description": "官方工具补充白名单",
