@@ -33,7 +33,7 @@
 - 空 assistant/think 和只剩 reminder 的旧消息清理
 - 上下文超阈值时做确定性压缩，不调用模型
 - 官方工具门控按消息内容执行，默认关闭
-- 保留最近 10 分钟使用过的官方工具和进行中调用
+- 保留最近 60 分钟使用过的官方工具和进行中调用
 
 ### Prompt Cache
 
@@ -58,8 +58,8 @@
 面向 300–500 条/日消息的群聊：
 
 ```yaml
-threshold_chars: 58000
-threshold_tokens: 32000
+threshold_chars: 70000
+threshold_tokens: 38000
 keep_recent_turns: 15
 cache_guard_minutes: 20
 

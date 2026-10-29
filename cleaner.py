@@ -67,12 +67,12 @@ class CleanStats:
 
 DEFAULTS: dict[str, Any] = {
     "enabled": True,
-    "threshold_chars": 58000,
-    "threshold_tokens": 32000,
+    "threshold_chars": 70000,
+    "threshold_tokens": 38000,
     "keep_recent_turns": 15,
     "reminder.dedupe": True,
     "reminder.keep_latest": True,
-    "tools.ttl_minutes": 10,
+    "tools.ttl_minutes": 60,
     "tools.keep_recent_pairs": 3,
     "tools.remove_orphan": True,
     "tools.summarize_long": False,
@@ -411,7 +411,7 @@ def _truncate_tool_result(message: dict, max_chars: int, stats: CleanStats) -> N
 
 def clean_tools(messages: list[dict], cfg: Any, stats: CleanStats) -> None:
     keep_recent = max(1, as_int(get_cfg(cfg, "tools.keep_recent_pairs", 3), 3))
-    ttl_minutes = max(0, as_int(get_cfg(cfg, "tools.ttl_minutes", 10), 10))
+    ttl_minutes = max(0, as_int(get_cfg(cfg, "tools.ttl_minutes", 60), 60))
     remove_orphan = as_bool(get_cfg(cfg, "tools.remove_orphan", True), True)
     summarize = as_bool(get_cfg(cfg, "tools.summarize_long", False), False)
     max_result_chars = max(200, as_int(get_cfg(cfg, "tools.max_result_chars", 4000), 4000))
@@ -570,8 +570,8 @@ def _compress_text(text: str, ratio: float) -> str:
 def compress_old(messages: list[dict], cfg: Any, stats: CleanStats, before_chars: int) -> None:
     if not as_bool(get_cfg(cfg, "compression.enabled", True), True):
         return
-    threshold_chars = max(500, as_int(get_cfg(cfg, "threshold_chars", 58000), 58000))
-    threshold_tokens = max(500, as_int(get_cfg(cfg, "threshold_tokens", 32000), 32000))
+    threshold_chars = max(500, as_int(get_cfg(cfg, "threshold_chars", 70000), 70000))
+    threshold_tokens = max(500, as_int(get_cfg(cfg, "threshold_tokens", 38000), 38000))
     if before_chars <= threshold_chars and estimate_tokens(before_chars) <= threshold_tokens:
         return
     min_chars = max(500, as_int(get_cfg(cfg, "compression.min_chars", 12000), 12000))
