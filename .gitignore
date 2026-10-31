@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.pyo
+data/
+plugin_data/
+backups/
+image_artifacts/
+image_captions.json
+*.key
+*.log
+.DS_Store
+Thumbs.db

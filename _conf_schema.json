@@ -30,9 +30,9 @@
       },
       "cache_guard_minutes": {
         "description": "活跃缓存保护（分钟）",
-        "hint": "最近 N 分钟内有请求时跳过清理；空闲后再做一次完整清理。0 表示关闭。",
+        "hint": "最近 N 分钟内有请求时跳过旧上下文清理和工具清理；默认 120，长度阈值仍负责兜底。",
         "type": "int",
-        "default": 20
+        "default": 120
       }
     }
   },
@@ -63,7 +63,7 @@
         "description": "工具调用保留分钟数",
         "hint": "历史消息带时间戳时才按时间判断；没有时间戳时按保留对数处理。活跃期间不清理。",
         "type": "int",
-        "default": 60
+        "default": 90
       },
       "keep_recent_pairs": {
         "description": "保留最近工具调用对数",
@@ -78,14 +78,14 @@
       },
       "summarize_long": {
         "description": "截断超长工具结果",
-        "hint": "默认关闭；开启后只做确定性截断，不调用模型。",
+        "hint": "默认开启：只截断旧工具结果一次，带截断标记；不会重复截断。",
         "type": "bool",
-        "default": false
+        "default": true
       },
       "max_result_chars": {
         "description": "工具结果最大字符数",
         "type": "int",
-        "default": 4000
+        "default": 6000
       },
       "cleanup": {
         "description": "工具定义清理",
@@ -183,6 +183,12 @@
             ]
           }
         }
+      },
+      "keep_recent_turns": {
+        "description": "工具消息保留轮数",
+        "hint": "只清理该轮数之前的工具调用/结果，默认 50；不要低于 50，避免扰动缓存前缀。",
+        "type": "int",
+        "default": 50
       }
     }
   },
@@ -194,7 +200,8 @@
       "clean_old": {
         "description": "替换旧图片",
         "type": "bool",
-        "default": true
+        "default": false,
+        "hint": "默认关闭，避免事后替换旧图片造成缓存失效；需要清旧图时再开。"
       },
       "placeholder": {
         "description": "无标签时的图片占位文本",
@@ -212,6 +219,50 @@
         "hint": "限制在 2-4 字符。",
         "type": "int",
         "default": 4
+      },
+      "only_base64": {
+        "description": "只清理内联 Base64 图片",
+        "hint": "默认只替换旧历史里的 data:image/base64，保留普通 URL 图片和图片说明，减少无谓的前缀变化。",
+        "type": "bool",
+        "default": true
+      },
+      "ingest_caption": {
+        "description": "图片入库短描述",
+        "hint": "首次请求时把图片转成标签+短描述，之后历史只保留这段文字。",
+        "type": "bool",
+        "default": true
+      },
+      "caption_provider_id": {
+        "description": "图片描述 Provider",
+        "hint": "留空使用当前 Provider；需要该模型支持图片输入。",
+        "type": "string",
+        "default": ""
+      },
+      "tag_max_chars": {
+        "description": "图片标签最大字数",
+        "type": "int",
+        "default": 4
+      },
+      "desc_max_chars": {
+        "description": "图片描述最大字数",
+        "type": "int",
+        "default": 15
+      },
+      "artifact_retention_days": {
+        "description": "图片原图保留天数",
+        "type": "int",
+        "default": 30
+      },
+      "artifact_max_files": {
+        "description": "图片原图最大文件数",
+        "type": "int",
+        "default": 500
+      },
+      "caption_failure_ttl_seconds": {
+        "description": "描述失败重试间隔秒数",
+        "type": "int",
+        "default": 60,
+        "hint": "图片描述失败后，多久允许重试；默认 60 秒。"
       }
     }
   },
@@ -244,9 +295,9 @@
       },
       "cache_prefix_messages": {
         "description": "保留前缀消息数",
-        "hint": "cache_friendly 开启时，前 N 条消息保持原样；建议 100-200。",
+        "hint": "cache_friendly 模式下前 N 条消息保持原样；默认 105，按当前会话长度折中。",
         "type": "int",
-        "default": 150
+        "default": 105
       }
     }
   },
@@ -305,7 +356,7 @@
       "command_cooldown_seconds": {
         "description": "持久命令冷却秒数",
         "type": "int",
-        "default": 60
+        "default": 120
       },
       "backup_retention_days": {
         "description": "逻辑备份保留天数",

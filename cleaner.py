@@ -72,18 +72,20 @@ DEFAULTS: dict[str, Any] = {
     "keep_recent_turns": 15,
     "reminder.dedupe": True,
     "reminder.keep_latest": True,
-    "tools.ttl_minutes": 60,
+    "tools.ttl_minutes": 90,
     "tools.keep_recent_pairs": 3,
     "tools.remove_orphan": True,
-    "tools.summarize_long": False,
-    "tools.max_result_chars": 4000,
+    "tools.summarize_long": True,
+    "tools.max_result_chars": 6000,
     "images.clean_old": True,
     "images.placeholder": "[图片已省略]",
+    "images.only_base64": True,
+    "tools.keep_recent_turns": 50,
     "compression.enabled": True,
     "compression.keep_ratio": 0.35,
     "compression.min_chars": 12000,
     "compression.cache_friendly": True,
-    "compression.cache_prefix_messages": 150,
+    "compression.cache_prefix_messages": 105,
     "persistent.allow": False,
     "persistent.require_admin": True,
     "persistent.backup_retention_days": 15,
@@ -270,7 +272,7 @@ def _cache_start(cfg: Any) -> int:
     """First index that may be rewritten when cache-friendly mode is on."""
     if not as_bool(get_cfg(cfg, "compression.cache_friendly", True), True):
         return 0
-    return max(0, as_int(get_cfg(cfg, "compression.cache_prefix_messages", 150), 150))
+    return max(0, as_int(get_cfg(cfg, "compression.cache_prefix_messages", 105), 105))
 
 
 def dedupe_old(messages: list[dict], cfg: Any, stats: CleanStats) -> None:
@@ -396,7 +398,7 @@ def _truncate_tool_result(message: dict, max_chars: int, stats: CleanStats) -> N
         text = text_of(message)
     else:
         return
-    if len(text) <= max_chars:
+    if "[工具结果中间已截断]" in text or len(text) <= max_chars:
         return
     # Keep the beginning and end: tool errors/exit codes often live at the tail.
     head_len = max(80, max_chars * 2 // 3)
@@ -411,11 +413,15 @@ def _truncate_tool_result(message: dict, max_chars: int, stats: CleanStats) -> N
 
 def clean_tools(messages: list[dict], cfg: Any, stats: CleanStats) -> None:
     keep_recent = max(1, as_int(get_cfg(cfg, "tools.keep_recent_pairs", 3), 3))
-    ttl_minutes = max(0, as_int(get_cfg(cfg, "tools.ttl_minutes", 60), 60))
+    ttl_minutes = max(0, as_int(get_cfg(cfg, "tools.ttl_minutes", 90), 90))
     remove_orphan = as_bool(get_cfg(cfg, "tools.remove_orphan", True), True)
-    summarize = as_bool(get_cfg(cfg, "tools.summarize_long", False), False)
-    max_result_chars = max(200, as_int(get_cfg(cfg, "tools.max_result_chars", 4000), 4000))
+    summarize = as_bool(get_cfg(cfg, "tools.summarize_long", True), True)
+    max_result_chars = max(200, as_int(get_cfg(cfg, "tools.max_result_chars", 6000), 6000))
     keep_turns = max(0, as_int(get_cfg(cfg, "keep_recent_turns", 15), 15))
+    # Only clean tool traffic older than this many turns; keep recent turns
+    # byte-stable so the prompt cache prefix is not disturbed.
+    tool_keep_turns = max(50, as_int(get_cfg(cfg, "tools.keep_recent_turns", 50), 50))
+    tool_recent_cutoff = max(0, len(messages) - tool_keep_turns * 2)
     recent_cutoff = max(0, len(messages) - keep_turns * 2)
     cutoff = datetime.now(timezone.utc).timestamp() - ttl_minutes * 60 if ttl_minutes else None
 
@@ -432,7 +438,7 @@ def clean_tools(messages: list[dict], cfg: Any, stats: CleanStats) -> None:
     start = _cache_start(cfg)
     recent_ids = {cid for _, cid, _, _ in calls[-keep_recent:]}
     keep_ids = set(recent_ids)
-    # Preserve the cache prefix untouched, including its tool calls.
+    # Preserve the cache prefix, including its tool calls.
     for idx, cid, _old, _has_ts in calls:
         if idx < start:
             keep_ids.add(cid)
@@ -444,7 +450,7 @@ def clean_tools(messages: list[dict], cfg: Any, stats: CleanStats) -> None:
 
     # Remove old assistant tool_calls (and their results) beyond the recent set.
     for i, message in enumerate(messages):
-        if i < start or not isinstance(message, dict) or message.get("role") != "assistant":
+        if i < start or i >= tool_recent_cutoff or not isinstance(message, dict) or message.get("role") != "assistant":
             continue
         tool_calls = message.get("tool_calls") or []
         if not tool_calls:
@@ -464,11 +470,11 @@ def clean_tools(messages: list[dict], cfg: Any, stats: CleanStats) -> None:
     # Remove tool messages without a surviving call; optionally remove all orphans.
     known_ids = {cid for _, cid, _, _ in calls}
     for i, message in enumerate(messages):
-        if i < start or not isinstance(message, dict) or message.get("role") != "tool":
+        if i < start or i >= tool_recent_cutoff or not isinstance(message, dict) or message.get("role") != "tool":
             continue
         cid = str(message.get("tool_call_id") or "")
         if cid and cid in keep_ids:
-            if summarize and start <= i < recent_cutoff:
+            if summarize:
                 _truncate_tool_result(message, max_result_chars, stats)
             continue
         if (not cid or cid not in known_ids) and not remove_orphan:
@@ -507,6 +513,17 @@ def _image_label(part: dict, max_chars: int) -> str:
     return ""
 
 
+def _image_has_inline_base64(part: dict) -> bool:
+    nested = part.get("image_url")
+    values = [part, nested] if isinstance(nested, dict) else [part]
+    for obj in values:
+        for key in ("url", "image_url", "data", "file"):
+            value = obj.get(key)
+            if isinstance(value, str) and ("base64," in value or value.startswith("data:image")):
+                return True
+    return False
+
+
 def clean_images(messages: list[dict], cfg: Any, stats: CleanStats) -> None:
     if not as_bool(get_cfg(cfg, "images.clean_old", True), True):
         return
@@ -515,6 +532,7 @@ def clean_images(messages: list[dict], cfg: Any, stats: CleanStats) -> None:
     start = _cache_start(cfg)
     placeholder = str(get_cfg(cfg, "images.placeholder", "[图片已省略]"))
     keep_labels = as_bool(get_cfg(cfg, "images.keep_labels", True), True)
+    only_base64 = as_bool(get_cfg(cfg, "images.only_base64", True), True)
     max_label = max(2, min(4, as_int(get_cfg(cfg, "images.max_label_chars", 4), 4)))
     for i, message in enumerate(messages):
         if i < start or i >= cutoff or not isinstance(message, dict):
@@ -529,6 +547,9 @@ def clean_images(messages: list[dict], cfg: Any, stats: CleanStats) -> None:
         labels: list[str] = []
         for part in content:
             if isinstance(part, dict) and part.get("type") in IMAGE_TYPES:
+                if only_base64 and not _image_has_inline_base64(part):
+                    new_parts.append(part)
+                    continue
                 stats.images_replaced += 1
                 image_count += 1
                 changed = True
@@ -581,7 +602,7 @@ def compress_old(messages: list[dict], cfg: Any, stats: CleanStats, before_chars
     keep_turns = max(1, as_int(get_cfg(cfg, "keep_recent_turns", 15), 15))
     cutoff = max(0, len(messages) - keep_turns * 2)
     cache_friendly = as_bool(get_cfg(cfg, "compression.cache_friendly", True), True)
-    cache_prefix = max(0, as_int(get_cfg(cfg, "compression.cache_prefix_messages", 150), 150))
+    cache_prefix = max(0, as_int(get_cfg(cfg, "compression.cache_prefix_messages", 105), 105))
     start = cache_prefix if cache_friendly else 0
     for i, message in enumerate(messages):
         if i < start or i >= cutoff or not isinstance(message, dict):
@@ -618,7 +639,8 @@ def clean_history(messages: Any, cfg: Any) -> tuple[list[dict], CleanStats]:
     )
     clean_reminders(working, cfg, stats)
     dedupe_old(working, cfg, stats)
-    clean_tools(working, cfg, stats)
+    if not as_bool(get_cfg(cfg, "tools.skip_cleanup", False), False):
+        clean_tools(working, cfg, stats)
     clean_images(working, cfg, stats)
     compress_old(working, cfg, stats, stats.before_chars)
     # Drop empty assistant/think shells, and old user turns that consisted
