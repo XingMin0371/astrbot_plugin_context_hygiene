@@ -14,12 +14,15 @@ No SQLite access and no external network calls.
 from __future__ import annotations
 
 import asyncio
+import base64
 import copy
 import hashlib
 import json
+import mimetypes
 import os
 import re
 import time
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -32,6 +35,12 @@ from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.provider import ProviderRequest
 from astrbot.api.star import Context, Star, register
+
+try:
+    from mcp.types import CallToolResult, ImageContent
+except ImportError:  # pragma: no cover
+    CallToolResult = None
+    ImageContent = None
 
 try:  # exported from AstrBot 4.29; older/newer builds may differ
     from astrbot.api.star import StarTools
@@ -62,7 +71,7 @@ except ImportError:  # local/single-file import fallback
     from tool_policy import clean_tool_definitions, gate_official_tools  # type: ignore[no-redef]
 
 PLUGIN_NAME = "astrbot_plugin_context_hygiene"
-VERSION = "1.1.8"
+VERSION = "1.2.2"
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
 
 
@@ -82,6 +91,7 @@ class ContextHygiene(Star):
         self._last_admin_action: dict[str, float] = {}
         self._context_cache: dict[str, tuple[str, int, list[dict]]] = {}
         self._last_request_at: dict[str, float] = {}
+        self._last_artifact_cleanup = 0.0
 
     def _cfg(self, key: str, default):
         if key in self._flat:
@@ -131,7 +141,7 @@ class ContextHygiene(Star):
             return "unknown"
 
     def _check_cooldown(self, event: AstrMessageEvent) -> bool:
-        seconds = max(0, as_int(self._cfg("persistent.command_cooldown_seconds", 60), 60))
+        seconds = max(0, as_int(self._cfg("persistent.command_cooldown_seconds", 120), 120))
         if not seconds:
             return True
         sender = self._sender_id(event)
@@ -249,6 +259,29 @@ class ContextHygiene(Star):
             except Exception as exc:  # noqa: BLE001
                 logger.warning("context_hygiene: tool assignment skipped (%s)", type(exc).__name__)
 
+    def _clean_config(self) -> dict:
+        """Keep tool cleanup single-owner when the memory plugin handles it."""
+        try:
+            cfg = copy.deepcopy(self.config)
+        except Exception:
+            cfg = dict(self.config) if hasattr(self.config, "items") else {}
+        if not isinstance(cfg, dict):
+            cfg = {}
+        try:
+            from astrbot.core.utils.astrbot_path import get_astrbot_data_path
+            path = Path(get_astrbot_data_path()) / "config" / "memory5_config.json"
+            if path.exists():
+                other = json.loads(path.read_text(encoding="utf-8-sig"))
+                if as_bool(other.get("inject", {}).get("tool_context_compress", True), True):
+                    tools = cfg.get("tools")
+                    if not isinstance(tools, dict):
+                        tools = {}
+                    tools["skip_cleanup"] = True
+                    cfg["tools"] = tools
+        except Exception:
+            pass
+        return cfg
+
     def _clean_contexts_cached(
         self, umo: str, contexts: list[dict]
     ) -> tuple[list[dict], CleanStats]:
@@ -271,7 +304,7 @@ class ContextHygiene(Star):
             except (TypeError, ValueError):
                 current_digest = ""
             if current_digest and current_digest == digest:
-                tail_cleaned, _tail_stats = clean_history(contexts[base_len:], self.config)
+                tail_cleaned, _tail_stats = clean_history(contexts[base_len:], self._clean_config())
                 combined = list(cleaned_prefix) + tail_cleaned
                 stats = CleanStats(
                     before_chars=sum(message_chars(m) for m in contexts),
@@ -282,7 +315,7 @@ class ContextHygiene(Star):
                 )
                 return combined, stats
 
-        cleaned, stats = clean_history(contexts, self.config)
+        cleaned, stats = clean_history(contexts, self._clean_config())
         if cacheable and len(contexts) <= 600:
             try:
                 raw_prefix = json.dumps(
@@ -296,8 +329,196 @@ class ContextHygiene(Star):
                 self._context_cache.pop(umo, None)
         return cleaned, stats
 
+    def _image_artifact_dir(self) -> Path:
+        return self._plugin_data_dir() / "image_artifacts"
+
+    async def _load_image_bytes(self, url: str) -> tuple[bytes, str] | None:
+        """Load one image once, with a hard size cap; no new dependency."""
+        try:
+            if url.startswith("data:"):
+                header, _, data = url.partition(",")
+                mime = header[5:].split(";", 1)[0] or "image/png"
+                raw = base64.b64decode(data)
+            elif url.startswith("file:"):
+                raw = Path(url[len("file://"):] if url.startswith("file://") else url[len("file:"):]).read_bytes()
+                mime = mimetypes.guess_type(url)[0] or "image/png"
+            elif url.startswith(("http://", "https://")):
+                def _fetch() -> bytes:
+                    req = urllib.request.Request(url, headers={"User-Agent": "context-hygiene/1.1"})
+                    with urllib.request.urlopen(req, timeout=15) as resp:
+                        return resp.read(8 * 1024 * 1024)
+                raw = await asyncio.to_thread(_fetch)
+                mime = "image/jpeg"
+            else:
+                return None
+            if not raw or len(raw) > 8 * 1024 * 1024:
+                return None
+            return raw, mime
+        except Exception:
+            return None
+
+    def _store_image_artifact(self, raw: bytes, mime: str) -> str:
+        artifact_id = hashlib.sha1(raw).hexdigest()[:16]
+        ext = mimetypes.guess_extension(mime or "image/jpeg") or ".bin"
+        directory = self._image_artifact_dir()
+        directory.mkdir(parents=True, exist_ok=True)
+        self._prune_image_artifacts()
+        path = directory / (artifact_id + ext)
+        if not path.exists():
+            path.write_bytes(raw)
+        return artifact_id
+
+    def _prune_image_artifacts(self) -> None:
+        """Keep image artifacts bounded by age and count."""
+        now = time.time()
+        if now - self._last_artifact_cleanup < 3600:
+            return
+        self._last_artifact_cleanup = now
+        directory = self._image_artifact_dir()
+        if not directory.is_dir():
+            return
+        max_days = max(1, as_int(self._cfg("images.artifact_retention_days", 30), 30))
+        max_files = max(10, as_int(self._cfg("images.artifact_max_files", 500), 500))
+        files = [p for p in directory.iterdir() if p.is_file()]
+        files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        cutoff = now - max_days * 86400
+        for idx, path in enumerate(files):
+            try:
+                if idx >= max_files or path.stat().st_mtime < cutoff:
+                    path.unlink(missing_ok=True)
+            except OSError:
+                continue
+
+    def _find_image_artifact(self, artifact_id: str) -> Path | None:
+        if not re.fullmatch(r"[0-9a-f]{16}", artifact_id or ""):
+            return None
+        directory = self._image_artifact_dir()
+        for path in directory.glob(artifact_id + ".*"):
+            if path.is_file():
+                return path
+        return None
+
+    @filter.llm_tool(name="read_image_artifact")
+    async def read_image_artifact(self, event: AstrMessageEvent, artifact_id: str):
+        """读取图片入库时保存的原图；仅在需要看清图片细节时调用。"""
+        path = self._find_image_artifact(str(artifact_id or "").strip())
+        if path is None or CallToolResult is None or ImageContent is None:
+            return "没有找到对应的图片原图。"
+        try:
+            data = base64.b64encode(path.read_bytes()).decode("ascii")
+            mime = mimetypes.guess_type(path.name)[0] or "image/png"
+            return CallToolResult(content=[ImageContent(type="image", data=data, mimeType=mime)])
+        except Exception:
+            return "图片原图读取失败。"
+
+    def _caption_cache_path(self) -> Path:
+        return self._plugin_data_dir() / "image_captions.json"
+
+    def _load_caption_cache(self) -> dict:
+        try:
+            path = self._caption_cache_path()
+            if path.exists():
+                data = json.loads(path.read_text(encoding="utf-8"))
+                return data if isinstance(data, dict) else {}
+        except Exception:
+            pass
+        return {}
+
+    def _save_caption_cache(self, cache: dict) -> None:
+        try:
+            path = self._caption_cache_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as exc:
+            logger.debug("context_hygiene: caption cache save skipped (%s)", type(exc).__name__)
+
+    async def _caption_current_images(self, req: ProviderRequest) -> None:
+        """Caption new images once, before they enter history; never rewrite old images."""
+        if not as_bool(self._cfg("images.ingest_caption", False), False):
+            return
+        urls = getattr(req, "image_urls", None)
+        if not isinstance(urls, list) or not urls:
+            return
+        provider = None
+        provider_id = str(self._cfg("images.caption_provider_id", "") or "").strip()
+        try:
+            if provider_id and hasattr(self.context, "get_provider_by_id"):
+                provider = self.context.get_provider_by_id(provider_id)
+            if provider is None:
+                provider = self.context.get_using_provider()
+        except Exception:
+            return
+        tag_max = max(1, as_int(self._cfg("images.tag_max_chars", 4), 4))
+        desc_max = max(1, as_int(self._cfg("images.desc_max_chars", 15), 15))
+        prompt = (
+            "请用简短中文描述这张图片，供聊天机器人理解。"
+            f"标签最多{tag_max}字，描述最多{desc_max}字。"
+            '只返回 JSON：{"tag":"标签","desc":"描述"}'
+        )
+        cache = self._load_caption_cache()
+        labels = []
+        changed = False
+        kept_urls = []
+        fail_ttl = max(10, as_int(self._cfg("images.caption_failure_ttl_seconds", 60), 60))
+        now = time.time()
+        for url in urls:
+            if not isinstance(url, str) or not url:
+                kept_urls.append(url)
+                continue
+            loaded = await self._load_image_bytes(url)
+            artifact_id = ""
+            content_key = ""
+            if loaded is not None:
+                artifact_id = self._store_image_artifact(loaded[0], loaded[1])
+                content_key = hashlib.sha1(loaded[0]).hexdigest()
+            url_key = hashlib.sha1(url.encode("utf-8", "ignore")).hexdigest()
+            key = content_key or url_key
+            item = cache.get(key) or cache.get(url_key)
+            if isinstance(item, dict) and item.get("failed_at"):
+                if now - float(item.get("failed_at") or 0) < fail_ttl:
+                    kept_urls.append(url)
+                    continue
+                item = None
+            if provider is not None and hasattr(provider, "text_chat"):
+                if not isinstance(item, dict):
+                    try:
+                        out = await provider.text_chat(
+                            prompt=prompt, contexts=[], image_urls=[url], session_id=None,
+                        )
+                        raw = str(getattr(out, "completion_text", "") or "").strip()
+                        obj = json.loads(raw[raw.find("{"): raw.rfind("}") + 1]) if "{" in raw else {}
+                        tag = str(obj.get("tag") or "").strip()[:tag_max]
+                        desc = str(obj.get("desc") or "").strip()[:desc_max]
+                        if not tag:
+                            raise ValueError("empty caption")
+                        item = {"tag": tag, "desc": desc, "artifact": artifact_id}
+                        cache[key] = item
+                        changed = True
+                    except Exception:
+                        # Keep the original image and avoid retrying every turn.
+                        cache[key] = {"failed_at": now}
+                        changed = True
+                        kept_urls.append(url)
+                        continue
+                elif artifact_id and item.get("artifact") != artifact_id:
+                    item["artifact"] = artifact_id
+                    changed = True
+            if isinstance(item, dict) and item.get("tag"):
+                tag = str(item.get("tag") or "")[:tag_max]
+                desc = str(item.get("desc") or "")[:desc_max]
+                art = str(item.get("artifact") or "")[:16]
+                suffix = f" | art:{art}" if art else ""
+                labels.append(f"[图片:{tag}" + (f" {desc}" if desc else "") + suffix + "]")
+            else:
+                kept_urls.append(url)
+        if changed:
+            self._save_caption_cache(cache)
+        if labels:
+            req.image_urls = kept_urls
+            req.prompt = (req.prompt or "").rstrip() + "\n" + "\n".join(labels)
+
     def _cache_guard_active(self, umo: str, now: float) -> bool:
-        minutes = max(0, as_int(self._cfg("cache_guard_minutes", 20), 20))
+        minutes = max(0, as_int(self._cfg("cache_guard_minutes", 120), 120))
         if minutes <= 0:
             return False
         last = self._last_request_at.get(umo)
@@ -310,6 +531,7 @@ class ContextHygiene(Star):
             return
         try:
             umo = str(getattr(event, "unified_msg_origin", "") or "")
+            await self._caption_current_images(req)
             now = time.time()
             active = self._cache_guard_active(umo, now)
             self._last_request_at[umo] = now
@@ -337,7 +559,7 @@ class ContextHygiene(Star):
                 )
         except Exception as exc:  # noqa: BLE001
             # Fail open: an error must never break the user's request.
-            logger.warning("context_hygiene: request filter skipped (%s)", type(exc).__name__)
+            logger.warning("context_hygiene: request filter skipped (%s: %s)", type(exc).__name__, exc)
 
     def _format_stats(self, stats: CleanStats, title: str) -> str:
         lines = [

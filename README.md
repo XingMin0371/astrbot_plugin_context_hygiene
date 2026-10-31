@@ -8,7 +8,7 @@
 - 保留当前消息的最新身份/时间提醒
 - 清理超过保留数量的工具调用对
 - 删除孤立 `tool` 消息
-- 旧图片替换为占位文本
+- 新图片入库时生成短标签/描述；旧图默认不事后替换
 - 上下文过大时做确定性压缩
 - 默认不调用模型，不产生额外 Token
 - 默认不写会话数据库
@@ -49,7 +49,7 @@ persistent:
   encrypt_backups: true
   allow_legacy_plaintext_backups: false
   audit_log: true
-  command_cooldown_seconds: 60
+  command_cooldown_seconds: 120
   backup_retention_days: 15
 ```
 
@@ -109,21 +109,25 @@ enabled: true
 threshold_chars: 70000
 threshold_tokens: 38000
 keep_recent_turns: 15
-cache_guard_minutes: 20
+cache_guard_minutes: 120
 
 reminder:
   dedupe: true
   keep_latest: true
 
 tools:
-  ttl_minutes: 60
+  ttl_minutes: 90
   keep_recent_pairs: 3
   remove_orphan: true
-  summarize_long: false
-  max_result_chars: 4000
+  summarize_long: true
+  max_result_chars: 6000
 
 images:
-  clean_old: true
+  clean_old: false
+  ingest_caption: true
+  tag_max_chars: 4
+  desc_max_chars: 15
+  caption_provider_id: ""
   placeholder: "[图片已省略]"
 
 compression:
@@ -131,7 +135,7 @@ compression:
   keep_ratio: 0.35
   min_chars: 12000
   cache_friendly: true
-  cache_prefix_messages: 150
+  cache_prefix_messages: 105
 
 persistent:
   allow: false
@@ -149,9 +153,9 @@ persistent:
 
 ### 活跃缓存保护
 
-`cache_guard_minutes: 20` 表示最近 20 分钟内有请求时跳过旧上下文清理和工具消息清理；空闲后再做一次完整清理。
+`cache_guard_minutes: 120` 表示最近 120 分钟内有请求时跳过旧上下文清理和工具消息清理；空闲后再做一次完整清理。
 
-`cache_prefix_messages: 150` 表示前 150 条消息不参与压缩/去重/图片替换/工具裁剪，尽量保持 Prompt Cache 前缀稳定。
+`cache_prefix_messages: 105` 表示前 105 条消息不参与压缩/去重/图片替换/工具裁剪，尽量保持 Prompt Cache 前缀稳定。
 
 ### 工具调用
 
@@ -185,8 +189,8 @@ tool result
 
 ```yaml
 tools:
-  summarize_long: false
-  max_result_chars: 4000
+  summarize_long: true
+  max_result_chars: 6000
 ```
 
 旧图片：
@@ -203,7 +207,7 @@ tools:
 ```yaml
 compression:
   cache_friendly: true
-  cache_prefix_messages: 150
+  cache_prefix_messages: 105
 ```
 
 开启后前 N 条消息保持原样，不参与压缩、去重、图片替换或工具裁剪；压缩仍然只做确定性截断，不调用模型。
@@ -325,4 +329,8 @@ astrbot.astrbot.*
 
 ## 版本
 
-`v1.1.8`
+`v1.2.2`
+
+## 第三方思路与许可
+
+本项目只在实际新增功能中参考了少量公开思路，原有分层记忆、提醒、归档、压缩、图片清理等不计入参考点；具体项目和未采用项见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。镜像与架构均未复制源代码。
