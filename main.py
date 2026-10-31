@@ -17,11 +17,14 @@ import asyncio
 import base64
 import copy
 import hashlib
+import ipaddress
 import json
 import mimetypes
 import os
 import re
+import socket
 import time
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -332,30 +335,57 @@ class ContextHygiene(Star):
     def _image_artifact_dir(self) -> Path:
         return self._plugin_data_dir() / "image_artifacts"
 
-    async def _load_image_bytes(self, url: str) -> tuple[bytes, str] | None:
-        """Load one image once, with a hard size cap; no new dependency."""
+    @staticmethod
+    def _public_image_host(host: str) -> bool:
         try:
+            infos = socket.getaddrinfo(host, None)
+        except Exception:
+            return False
+        for info in infos:
+            try:
+                ip = ipaddress.ip_address(info[4][0])
+            except ValueError:
+                return False
+            if (ip.is_private or ip.is_loopback or ip.is_link_local
+                    or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
+                return False
+        return True
+
+    async def _load_image_bytes(self, url: str) -> tuple[bytes, str] | None:
+        """Load only a size-capped data URL or a public HTTP(S) image."""
+        try:
+            max_bytes = 8 * 1024 * 1024
             if url.startswith("data:"):
                 header, _, data = url.partition(",")
+                if len(data) > max_bytes * 2:
+                    return None
                 mime = header[5:].split(";", 1)[0] or "image/png"
-                raw = base64.b64decode(data)
+                raw = base64.b64decode(data, validate=False)
             elif url.startswith("file:"):
-                raw = Path(url[len("file://"):] if url.startswith("file://") else url[len("file:"):]).read_bytes()
-                mime = mimetypes.guess_type(url)[0] or "image/png"
+                return None
             elif url.startswith(("http://", "https://")):
+                parsed = urllib.parse.urlsplit(url)
+                if not parsed.hostname or not self._public_image_host(parsed.hostname):
+                    return None
                 def _fetch() -> bytes:
                     req = urllib.request.Request(url, headers={"User-Agent": "context-hygiene/1.1"})
                     with urllib.request.urlopen(req, timeout=15) as resp:
-                        return resp.read(8 * 1024 * 1024)
+                        final = urllib.parse.urlsplit(resp.geturl())
+                        if not final.hostname or not self._public_image_host(final.hostname):
+                            return b""
+                        return resp.read(max_bytes + 1)
                 raw = await asyncio.to_thread(_fetch)
                 mime = "image/jpeg"
             else:
                 return None
-            if not raw or len(raw) > 8 * 1024 * 1024:
+            if not raw or len(raw) > max_bytes:
                 return None
             return raw, mime
         except Exception:
             return None
+
+    def _image_artifact_key(self) -> bytes:
+        return self._backup_key()
 
     def _store_image_artifact(self, raw: bytes, mime: str) -> str:
         artifact_id = hashlib.sha1(raw).hexdigest()[:16]
@@ -365,8 +395,22 @@ class ContextHygiene(Star):
         self._prune_image_artifacts()
         path = directory / (artifact_id + ext)
         if not path.exists():
-            path.write_bytes(raw)
+            if AESGCM is not None:
+                nonce = os.urandom(12)
+                body = b"IMG1" + nonce + AESGCM(self._image_artifact_key()).encrypt(nonce, raw, b"image_artifact")
+            else:
+                body = raw
+            path.write_bytes(body)
         return artifact_id
+
+    def _read_image_artifact(self, path: Path) -> bytes:
+        raw = path.read_bytes()
+        if raw.startswith(b"IMG1"):
+            if AESGCM is None or len(raw) < 16:
+                raise RuntimeError("image artifact encryption unavailable")
+            nonce = raw[4:16]
+            return AESGCM(self._image_artifact_key()).decrypt(nonce, raw[16:], b"image_artifact")
+        return raw
 
     def _prune_image_artifacts(self) -> None:
         """Keep image artifacts bounded by age and count."""
@@ -405,7 +449,7 @@ class ContextHygiene(Star):
         if path is None or CallToolResult is None or ImageContent is None:
             return "没有找到对应的图片原图。"
         try:
-            data = base64.b64encode(path.read_bytes()).decode("ascii")
+            data = base64.b64encode(self._read_image_artifact(path)).decode("ascii")
             mime = mimetypes.guess_type(path.name)[0] or "image/png"
             return CallToolResult(content=[ImageContent(type="image", data=data, mimeType=mime)])
         except Exception:

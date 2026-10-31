@@ -30,7 +30,7 @@ data/plugins/astrbot_plugin_context_hygiene/
 4 字内标签 + 15 字内描述
 ```
 
-原图保存到：
+原图使用 AES-GCM 简单加密后保存到：
 
 ```text
 <AstrBot数据目录>/plugin_data/astrbot_plugin_context_hygiene/image_artifacts/
@@ -50,6 +50,8 @@ images.clean_old: false
 ```
 
 如果当前 Provider 不支持图片，描述会失败并保留原图；不会因此删除图片。
+
+图片下载只接受 data URL 或公网 HTTP(S)，拒绝 file:、回环地址和私有地址，减少 SSRF/本地文件读取风险。
 
 ## 缓存保护
 
