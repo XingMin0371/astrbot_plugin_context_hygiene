@@ -331,6 +331,10 @@ astrbot.astrbot.*
 
 `v1.2.2`
 
+## 图片原图与加密
+
+图片 artifact 使用 AES-GCM 简单加密；读取时自动解密，兼容旧的明文 artifact。图片下载拒绝 file:、回环和私有地址，只接受 data URL 或公网 HTTP(S)。
+
 ## 第三方思路与许可
 
 本项目只在实际新增功能中参考了少量公开思路，原有分层记忆、提醒、归档、压缩、图片清理等不计入参考点；具体项目和未采用项见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。镜像与架构均未复制源代码。
