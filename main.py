@@ -429,7 +429,7 @@ class ContextHygiene(Star):
         directory = self._image_artifact_dir()
         if not directory.is_dir():
             return
-        max_days = max(1, as_int(self._cfg("images.artifact_retention_days", 30), 30))
+        max_days = max(1, as_int(self._cfg("images.artifact_retention_days", 15), 15))
         max_files = max(10, as_int(self._cfg("images.artifact_max_files", 500), 500))
         files = [p for p in directory.iterdir() if p.is_file()]
         files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
