@@ -39,7 +39,7 @@ data/plugins/astrbot_plugin_context_hygiene/
 保留期和数量上限：
 
 ```yaml
-images.artifact_retention_days: 30
+images.artifact_retention_days: 15
 images.artifact_max_files: 500
 ```
 
