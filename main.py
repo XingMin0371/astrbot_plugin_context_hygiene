@@ -410,6 +410,14 @@ class ContextHygiene(Star):
                 raise RuntimeError("image artifact encryption unavailable")
             nonce = raw[4:16]
             return AESGCM(self._image_artifact_key()).decrypt(nonce, raw[16:], b"image_artifact")
+        # Migrate legacy plaintext artifacts on first read.
+        if raw and AESGCM is not None:
+            try:
+                nonce = os.urandom(12)
+                body = b"IMG1" + nonce + AESGCM(self._image_artifact_key()).encrypt(nonce, raw, b"image_artifact")
+                path.write_bytes(body)
+            except Exception:
+                pass
         return raw
 
     def _prune_image_artifacts(self) -> None:
