@@ -109,9 +109,9 @@
       },
       "ttl_minutes": {
         "description": "工具调用保留分钟数",
-        "hint": "历史消息带时间戳时才按时间判断；没有时间戳时按保留对数处理。活跃期间不清理。",
+        "hint": "历史消息带时间戳时按时间判断；没有时间戳时按保留对数处理。默认 65，活跃期间不清理。",
         "type": "int",
-        "default": 90
+        "default": 65
       },
       "keep_recent_pairs": {
         "description": "保留最近工具调用对数",

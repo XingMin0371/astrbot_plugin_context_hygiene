@@ -72,7 +72,7 @@ DEFAULTS: dict[str, Any] = {
     "keep_recent_turns": 24,
     "reminder.dedupe": True,
     "reminder.keep_latest": True,
-    "tools.ttl_minutes": 90,
+    "tools.ttl_minutes": 65,
     "tools.keep_recent_pairs": 3,
     "tools.remove_orphan": True,
     "tools.summarize_long": True,
@@ -427,7 +427,7 @@ def cap_current_tool_results(messages: list[dict], cfg: Any, stats: CleanStats) 
 
 def clean_tools(messages: list[dict], cfg: Any, stats: CleanStats) -> None:
     keep_recent = max(1, as_int(get_cfg(cfg, "tools.keep_recent_pairs", 3), 3))
-    ttl_minutes = max(0, as_int(get_cfg(cfg, "tools.ttl_minutes", 90), 90))
+    ttl_minutes = max(0, as_int(get_cfg(cfg, "tools.ttl_minutes", 65), 65))
     remove_orphan = as_bool(get_cfg(cfg, "tools.remove_orphan", True), True)
     summarize = as_bool(get_cfg(cfg, "tools.summarize_long", True), True)
     max_result_chars = max(200, as_int(get_cfg(cfg, "tools.max_result_chars", 6000), 6000))
