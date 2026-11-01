@@ -90,8 +90,8 @@
         "default": false
       },
       "max_current_result_chars": {
-        "description": "当前工具结果单条硬上限",
-        "hint": "只截断当前轮工具结果，保护历史缓存前缀；默认 12000 字符。",
+        "description": "当前轮工具结果硬上限",
+        "hint": "只截断当前轮工具结果，默认 12000；旧结果之后按“工具结果最大字符数”再压缩。",
         "type": "int",
         "default": 12000
       },
@@ -102,9 +102,10 @@
         "default": true
       },
       "max_result_chars": {
-        "description": "工具结果最大字符数",
+        "description": "旧工具结果压缩上限",
         "type": "int",
-        "default": 6000
+        "default": 6000,
+        "hint": "只处理已超过保留轮数的旧工具结果；默认 6000。当前轮由上一项限制。"
       },
       "ttl_minutes": {
         "description": "工具调用保留分钟数",
@@ -166,7 +167,8 @@
               "max_description_chars": {
                 "description": "工具描述最大字符数",
                 "type": "int",
-                "default": 1200
+                "default": 1200,
+                "hint": "仅在 mode=strong 时生效；默认 1200，第三方工具描述较长可调到 2000–3000。"
               },
               "protected_tool_patterns": {
                 "description": "受保护工具关键词",
