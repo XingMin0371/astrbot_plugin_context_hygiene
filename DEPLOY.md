@@ -51,7 +51,7 @@ images.clean_old: false
 
 如果当前 Provider 不支持图片，描述会失败并保留原图；不会因此删除图片。
 
-图片下载只接受 data URL 或公网 HTTP(S)，拒绝 file:、回环地址和私有地址，减少 SSRF/本地文件读取风险。
+图片下载接受 data URL、受信任的本地 temp/plugin_data 路径或公网 HTTP(S)，仍拒绝任意 file:、回环地址和私有地址，减少 SSRF/本地文件读取风险。图片 artifact 固定目录：<AstrBot数据目录>/plugin_data/astrbot_plugin_context_hygiene/image_artifacts/。
 
 ## 缓存保护
 

@@ -74,8 +74,9 @@ except ImportError:  # local/single-file import fallback
     from tool_policy import clean_tool_definitions, gate_official_tools  # type: ignore[no-redef]
 
 PLUGIN_NAME = "astrbot_plugin_context_hygiene"
-VERSION = "1.2.2"
+VERSION = "1.2.3"
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
+IMAGE_ARTIFACT_DIR_NAME = "image_artifacts"
 
 
 @register(
@@ -333,7 +334,7 @@ class ContextHygiene(Star):
         return cleaned, stats
 
     def _image_artifact_dir(self) -> Path:
-        return self._plugin_data_dir() / "image_artifacts"
+        return self._plugin_data_dir() / IMAGE_ARTIFACT_DIR_NAME
 
     @staticmethod
     def _public_image_host(host: str) -> bool:
@@ -351,8 +352,31 @@ class ContextHygiene(Star):
                 return False
         return True
 
+    def _trusted_local_image(self, path: Path) -> Path | None:
+        """Allow only AstrBot temp/plugin-data paths, never arbitrary files."""
+        try:
+            from astrbot.core.utils.astrbot_path import get_astrbot_data_path
+
+            data_root = Path(get_astrbot_data_path()).resolve()
+            roots = [data_root / "temp", data_root / "plugin_data"]
+        except Exception:
+            try:
+                roots = [self._plugin_data_dir().resolve().parent]
+            except Exception:
+                return None
+        resolved = path.expanduser().resolve()
+        for root in roots:
+            try:
+                root = root.resolve()
+                if resolved == root or root in resolved.parents:
+                    if resolved.is_file():
+                        return resolved
+            except OSError:
+                continue
+        return None
+
     async def _load_image_bytes(self, url: str) -> tuple[bytes, str] | None:
-        """Load only a size-capped data URL or a public HTTP(S) image."""
+        """Load a size-capped data URL, trusted local path, or public HTTP(S) image."""
         try:
             max_bytes = 8 * 1024 * 1024
             if url.startswith("data:"):
@@ -361,8 +385,16 @@ class ContextHygiene(Star):
                     return None
                 mime = header[5:].split(";", 1)[0] or "image/png"
                 raw = base64.b64decode(data, validate=False)
-            elif url.startswith("file:"):
-                return None
+            elif url.startswith("file:") or os.path.isabs(url):
+                parsed = urllib.parse.urlsplit(url) if url.startswith("file:") else None
+                if parsed is not None and parsed.netloc not in ("", "localhost"):
+                    return None
+                path = Path(urllib.parse.unquote(parsed.path if parsed else url))
+                safe_path = self._trusted_local_image(path)
+                if safe_path is None or safe_path.stat().st_size > max_bytes:
+                    return None
+                raw = await asyncio.to_thread(safe_path.read_bytes)
+                mime = mimetypes.guess_type(safe_path.name)[0] or "image/png"
             elif url.startswith(("http://", "https://")):
                 parsed = urllib.parse.urlsplit(url)
                 if not parsed.hostname or not self._public_image_host(parsed.hostname):
@@ -452,7 +484,7 @@ class ContextHygiene(Star):
 
     @filter.llm_tool(name="read_image_artifact")
     async def read_image_artifact(self, event: AstrMessageEvent, artifact_id: str):
-        """读取图片入库时保存的原图；仅在需要看清图片细节时调用。"""
+        """读取 context_hygiene 的图片原图 artifact；不是 memory5 工具结果归档。"""
         path = self._find_image_artifact(str(artifact_id or "").strip())
         if path is None or CallToolResult is None or ImageContent is None:
             return "没有找到对应的图片原图。"

@@ -329,11 +329,37 @@ astrbot.astrbot.*
 
 ## 版本
 
-`v1.2.2`
+`v1.2.3`
 
 ## 图片原图与加密
 
 图片 artifact 使用 AES-GCM 简单加密；读取时自动解密，兼容旧的明文 artifact。图片下载拒绝 file:、回环和私有地址，只接受 data URL 或公网 HTTP(S)。
+
+## 图片 artifact 路径
+
+固定目录：
+
+```text
+<AstrBot数据目录>/plugin_data/astrbot_plugin_context_hygiene/image_artifacts/
+```
+
+与 memory5 的工具结果归档分开。面板自检会分别显示：
+
+```text
+工具结果归档
+图片原图归档
+```
+
+## 受信任的本地图片
+
+只允许读取：
+
+```text
+<AstrBot数据目录>/temp/
+<AstrBot数据目录>/plugin_data/
+```
+
+仍然拒绝任意 `file:`、私网 HTTP、回环地址。图片描述 Provider 为空时，回退到当前聊天 Provider。
 
 ## 第三方思路与许可
 
