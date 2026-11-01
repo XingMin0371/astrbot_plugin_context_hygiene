@@ -602,7 +602,7 @@ class ContextHygiene(Star):
             req.prompt = (req.prompt or "").rstrip() + "\n" + "\n".join(labels)
 
     def _cache_guard_active(self, umo: str, now: float) -> bool:
-        minutes = max(0, as_int(self._cfg("cache_guard_minutes", 120), 120))
+        minutes = max(0, as_int(self._cfg("cache_guard_minutes", 75), 75))
         if minutes <= 0:
             return False
         last = self._last_request_at.get(umo)
