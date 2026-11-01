@@ -132,8 +132,8 @@ images:
 
 compression:
   enabled: true
-  keep_ratio: 0.45
-  min_chars: 30000
+  keep_ratio: 0.375
+  min_chars: 17500
   cache_friendly: true
   cache_prefix_messages: 105
 
@@ -145,7 +145,7 @@ persistent:
 
 ### 压缩比例
 
-`keep_ratio: 0.45` 表示旧文本保留约 35%，不是删除 35%。
+`keep_ratio: 0.375` 表示旧文本保留约 35%，不是删除 35%。
 
 最近 `keep_recent_turns` 轮不压缩；当前消息永远保留。
 

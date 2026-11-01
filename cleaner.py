@@ -82,8 +82,8 @@ DEFAULTS: dict[str, Any] = {
     "images.only_base64": True,
     "tools.keep_recent_turns": 50,
     "compression.enabled": True,
-    "compression.keep_ratio": 0.45,
-    "compression.min_chars": 30000,
+    "compression.keep_ratio": 0.375,
+    "compression.min_chars": 17500,
     "compression.cache_friendly": True,
     "compression.cache_prefix_messages": 105,
     "persistent.allow": False,
@@ -595,10 +595,10 @@ def compress_old(messages: list[dict], cfg: Any, stats: CleanStats, before_chars
     threshold_tokens = max(500, as_int(get_cfg(cfg, "threshold_tokens", 100000), 100000))
     if before_chars <= threshold_chars and estimate_tokens(before_chars) <= threshold_tokens:
         return
-    min_chars = max(500, as_int(get_cfg(cfg, "compression.min_chars", 30000), 30000))
+    min_chars = max(500, as_int(get_cfg(cfg, "compression.min_chars", 17500), 17500))
     if before_chars < min_chars:
         return
-    ratio = max(0.05, min(0.9, as_float(get_cfg(cfg, "compression.keep_ratio", 0.45), 0.45)))
+    ratio = max(0.05, min(0.9, as_float(get_cfg(cfg, "compression.keep_ratio", 0.375), 0.375)))
     keep_turns = max(1, as_int(get_cfg(cfg, "keep_recent_turns", 25), 25))
     cutoff = max(0, len(messages) - keep_turns * 2)
     cache_friendly = as_bool(get_cfg(cfg, "compression.cache_friendly", True), True)
