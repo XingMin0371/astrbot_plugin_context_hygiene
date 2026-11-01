@@ -106,8 +106,8 @@ data/plugin_data/astrbot_plugin_context_hygiene/backups/
 
 ```yaml
 enabled: true
-threshold_chars: 130000
-threshold_tokens: 76000
+threshold_chars: 128000
+threshold_tokens: 75000
 keep_recent_turns: 25
 cache_guard_minutes: 120
 
