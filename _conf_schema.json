@@ -12,21 +12,21 @@
       },
       "threshold_chars": {
         "description": "压缩触发字符数",
-        "hint": "历史文本超过该长度才压缩旧对话；默认 70000，对应约 38000 Token（按字符×0.55估算）。",
+        "hint": "历史文本超过该长度才压缩旧对话；默认 180000，约 99000 Token。",
         "type": "int",
-        "default": 70000
+        "default": 180000
       },
       "threshold_tokens": {
         "description": "压缩触发估算 Token",
-        "hint": "按字符数×0.55粗略估算，不调用分词器；默认 38000。",
+        "hint": "按字符×0.55估算；默认 100000，低于当前模型 126976 上限。",
         "type": "int",
-        "default": 38000
+        "default": 100000
       },
       "keep_recent_turns": {
         "description": "保留最近轮数",
-        "hint": "最近 N 轮不压缩、不替换图片；工具调用另受保留数量控制。",
+        "hint": "压缩时保留最近多少轮对话；默认 30。",
         "type": "int",
-        "default": 15
+        "default": 30
       },
       "cache_guard_minutes": {
         "description": "活跃缓存保护（分钟）",
@@ -279,9 +279,9 @@
       },
       "keep_ratio": {
         "description": "旧文本保留比例",
-        "hint": "0.35 表示旧文本保留约 35%；最近 N 轮不受影响。",
+        "hint": "压缩后旧文本保留比例；默认 0.60，减少前缀改写幅度。",
         "type": "float",
-        "default": 0.35
+        "default": 0.6
       },
       "min_chars": {
         "description": "最小压缩长度",

@@ -106,8 +106,8 @@ data/plugin_data/astrbot_plugin_context_hygiene/backups/
 
 ```yaml
 enabled: true
-threshold_chars: 70000
-threshold_tokens: 38000
+threshold_chars: 180000
+threshold_tokens: 100000
 keep_recent_turns: 15
 cache_guard_minutes: 120
 
@@ -132,7 +132,7 @@ images:
 
 compression:
   enabled: true
-  keep_ratio: 0.35
+  keep_ratio: 0.60
   min_chars: 12000
   cache_friendly: true
   cache_prefix_messages: 105
@@ -145,7 +145,7 @@ persistent:
 
 ### 压缩比例
 
-`keep_ratio: 0.35` 表示旧文本保留约 35%，不是删除 35%。
+`keep_ratio: 0.60` 表示旧文本保留约 35%，不是删除 35%。
 
 最近 `keep_recent_turns` 轮不压缩；当前消息永远保留。
 
