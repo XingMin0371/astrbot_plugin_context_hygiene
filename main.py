@@ -276,12 +276,12 @@ class ContextHygiene(Star):
             path = Path(get_astrbot_data_path()) / "config" / "memory5_config.json"
             if path.exists():
                 other = json.loads(path.read_text(encoding="utf-8-sig"))
+                tools = cfg.get("tools")
+                if not isinstance(tools, dict):
+                    tools = {}
+                cfg["tools"] = tools
                 if as_bool(other.get("inject", {}).get("tool_context_compress", True), True):
-                    tools = cfg.get("tools")
-                    if not isinstance(tools, dict):
-                        tools = {}
                     tools["skip_cleanup"] = True
-                    cfg["tools"] = tools
         except Exception:
             pass
         return cfg
@@ -462,7 +462,7 @@ class ContextHygiene(Star):
         if not directory.is_dir():
             return
         max_days = max(1, as_int(self._cfg("images.artifact_retention_days", 15), 15))
-        max_files = max(10, as_int(self._cfg("images.artifact_max_files", 500), 500))
+        max_files = max(10, as_int(self._cfg("images.artifact_max_files", 240), 240))
         files = [p for p in directory.iterdir() if p.is_file()]
         files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
         cutoff = now - max_days * 86400

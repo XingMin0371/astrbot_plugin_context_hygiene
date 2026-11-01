@@ -108,7 +108,7 @@ data/plugin_data/astrbot_plugin_context_hygiene/backups/
 enabled: true
 threshold_chars: 126500
 threshold_tokens: 75000
-keep_recent_turns: 25
+keep_recent_turns: 24
 cache_guard_minutes: 120
 
 reminder:
@@ -132,10 +132,10 @@ images:
 
 compression:
   enabled: true
-  keep_ratio: 0.35
+  keep_ratio: 0.333
   min_chars: 16000
   cache_friendly: true
-  cache_prefix_messages: 105
+  cache_prefix_messages: 65
 
 persistent:
   allow: false
@@ -143,9 +143,26 @@ persistent:
   backup_retention_days: 15
 ```
 
+### 当前工具结果硬上限
+
+```yaml
+tools.max_current_result_chars: 12000
+```
+
+只截断当前轮的工具结果，保留开头和结尾；历史工具结果仍按旧规则处理，避免改动缓存前缀。
+
+### 工具清理与 memory5
+
+```yaml
+tools.skip_cleanup: false
+```
+
+`skip_cleanup` 手动开启后，本插件不再清理工具调用/结果。  
+检测到其他工具压缩插件开启时会自动跳过；没有检测到则按默认值正常清理。
+
 ### 压缩比例
 
-`keep_ratio: 0.35` 表示旧文本保留约 35%，不是删除 35%。
+`keep_ratio: 0.333` 表示旧文本保留约 35%，不是删除 35%。
 
 最近 `keep_recent_turns` 轮不压缩；当前消息永远保留。
 
@@ -155,7 +172,7 @@ persistent:
 
 `cache_guard_minutes: 120` 表示最近 120 分钟内有请求时跳过旧上下文清理和工具消息清理；空闲后再做一次完整清理。
 
-`cache_prefix_messages: 105` 表示前 105 条消息不参与压缩/去重/图片替换/工具裁剪，尽量保持 Prompt Cache 前缀稳定。
+`cache_prefix_messages: 65` 表示前 105 条消息不参与压缩/去重/图片替换/工具裁剪，尽量保持 Prompt Cache 前缀稳定。
 
 ### 工具调用
 
@@ -207,7 +224,7 @@ tools:
 ```yaml
 compression:
   cache_friendly: true
-  cache_prefix_messages: 105
+  cache_prefix_messages: 65
 ```
 
 开启后前 N 条消息保持原样，不参与压缩、去重、图片替换或工具裁剪；压缩仍然只做确定性截断，不调用模型。

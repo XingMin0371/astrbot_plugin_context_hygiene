@@ -24,9 +24,9 @@
       },
       "keep_recent_turns": {
         "description": "保留最近轮数",
-        "hint": "压缩时保留最近多少轮对话；默认 25。",
+        "hint": "压缩时保留最近多少轮对话；默认 24。",
         "type": "int",
-        "default": 25
+        "default": 24
       },
       "cache_guard_minutes": {
         "description": "活跃缓存保护（分钟）",
@@ -186,9 +186,21 @@
       },
       "keep_recent_turns": {
         "description": "工具消息保留轮数",
-        "hint": "只清理该轮数之前的工具调用/结果，默认 50；不要低于 50，避免扰动缓存前缀。",
+        "hint": "只清理该轮数之前的工具调用/结果；默认 30。",
         "type": "int",
-        "default": 50
+        "default": 30
+      },
+      "skip_cleanup": {
+        "description": "跳过工具消息清理",
+        "hint": "默认关闭；检测到其他工具压缩插件时自动跳过；手动开启会始终跳过工具消息清理。",
+        "type": "bool",
+        "default": false
+      },
+      "max_current_result_chars": {
+        "description": "当前工具结果单条硬上限",
+        "hint": "只截断当前轮工具结果，保护历史缓存前缀；默认 12000 字符。",
+        "type": "int",
+        "default": 12000
       }
     }
   },
@@ -257,7 +269,7 @@
       "artifact_max_files": {
         "description": "图片原图最大文件数",
         "type": "int",
-        "default": 500
+        "default": 240
       },
       "caption_failure_ttl_seconds": {
         "description": "描述失败重试间隔秒数",
@@ -279,9 +291,9 @@
       },
       "keep_ratio": {
         "description": "旧文本保留比例",
-        "hint": "压缩后旧文本保留比例；默认 0.35。",
+        "hint": "压缩后旧文本保留比例；默认 0.333。",
         "type": "float",
-        "default": 0.35
+        "default": 0.333
       },
       "min_chars": {
         "description": "最小压缩长度",
@@ -297,9 +309,9 @@
       },
       "cache_prefix_messages": {
         "description": "保留前缀消息数",
-        "hint": "cache_friendly 模式下前 N 条消息保持原样；默认 105，按当前会话长度折中。",
+        "hint": "cache_friendly 模式下前 N 条消息保持原样；默认 65。",
         "type": "int",
-        "default": 105
+        "default": 65
       }
     }
   },
