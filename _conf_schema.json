@@ -279,9 +279,9 @@
       },
       "keep_ratio": {
         "description": "旧文本保留比例",
-        "hint": "压缩后旧文本保留比例；默认 0.375。",
+        "hint": "压缩后旧文本保留比例；默认 0.35。",
         "type": "float",
-        "default": 0.375
+        "default": 0.35
       },
       "min_chars": {
         "description": "最小压缩长度",
