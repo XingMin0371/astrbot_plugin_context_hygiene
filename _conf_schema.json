@@ -24,9 +24,9 @@
       },
       "keep_recent_turns": {
         "description": "保留最近轮数",
-        "hint": "压缩时保留最近多少轮对话；默认 30。",
+        "hint": "压缩时保留最近多少轮对话；默认 25。",
         "type": "int",
-        "default": 30
+        "default": 25
       },
       "cache_guard_minutes": {
         "description": "活跃缓存保护（分钟）",
@@ -279,14 +279,15 @@
       },
       "keep_ratio": {
         "description": "旧文本保留比例",
-        "hint": "压缩后旧文本保留比例；默认 0.60，减少前缀改写幅度。",
+        "hint": "压缩后旧文本保留比例；默认 0.45，压缩更有效。",
         "type": "float",
-        "default": 0.6
+        "default": 0.45
       },
       "min_chars": {
         "description": "最小压缩长度",
         "type": "int",
-        "default": 12000
+        "default": 30000,
+        "hint": "上下文低于该长度时不压缩；默认 30000。"
       },
       "cache_friendly": {
         "description": "保留前缀以利用 Prompt Cache",
