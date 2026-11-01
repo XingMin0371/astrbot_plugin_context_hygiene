@@ -12,15 +12,15 @@
       },
       "threshold_chars": {
         "description": "压缩触发字符数",
-        "hint": "历史文本超过该字符数才压缩旧对话；默认 180000。",
+        "hint": "历史文本超过该字符数才压缩旧对话；默认 130000。",
         "type": "int",
-        "default": 180000
+        "default": 130000
       },
       "threshold_tokens": {
         "description": "压缩触发估算 Token",
-        "hint": "估算 Token 超过该值才压缩旧对话；默认 100000。",
+        "hint": "估算 Token 超过该值才压缩旧对话；默认 76000。",
         "type": "int",
-        "default": 100000
+        "default": 76000
       },
       "keep_recent_turns": {
         "description": "保留最近轮数",

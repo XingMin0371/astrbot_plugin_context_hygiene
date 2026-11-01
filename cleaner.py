@@ -67,8 +67,8 @@ class CleanStats:
 
 DEFAULTS: dict[str, Any] = {
     "enabled": True,
-    "threshold_chars": 180000,
-    "threshold_tokens": 100000,
+    "threshold_chars": 130000,
+    "threshold_tokens": 76000,
     "keep_recent_turns": 25,
     "reminder.dedupe": True,
     "reminder.keep_latest": True,
@@ -591,8 +591,8 @@ def _compress_text(text: str, ratio: float) -> str:
 def compress_old(messages: list[dict], cfg: Any, stats: CleanStats, before_chars: int) -> None:
     if not as_bool(get_cfg(cfg, "compression.enabled", True), True):
         return
-    threshold_chars = max(500, as_int(get_cfg(cfg, "threshold_chars", 180000), 180000))
-    threshold_tokens = max(500, as_int(get_cfg(cfg, "threshold_tokens", 100000), 100000))
+    threshold_chars = max(500, as_int(get_cfg(cfg, "threshold_chars", 130000), 130000))
+    threshold_tokens = max(500, as_int(get_cfg(cfg, "threshold_tokens", 76000), 76000))
     if before_chars <= threshold_chars and estimate_tokens(before_chars) <= threshold_tokens:
         return
     min_chars = max(500, as_int(get_cfg(cfg, "compression.min_chars", 17500), 17500))
