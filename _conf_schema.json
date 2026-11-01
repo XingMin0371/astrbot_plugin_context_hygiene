@@ -12,9 +12,9 @@
       },
       "threshold_chars": {
         "description": "压缩触发字符数",
-        "hint": "历史文本超过该字符数才压缩旧对话；默认 128000。",
+        "hint": "历史文本超过该字符数才压缩旧对话；默认 126500。",
         "type": "int",
-        "default": 128000
+        "default": 126500
       },
       "threshold_tokens": {
         "description": "压缩触发估算 Token",
@@ -286,8 +286,8 @@
       "min_chars": {
         "description": "最小压缩长度",
         "type": "int",
-        "default": 17500,
-        "hint": "上下文低于该长度不压缩；默认 17500。小群/私聊多可用 12000，500–1000 条/天可用 20000，工具多或上下文很长可用 24000。"
+        "default": 16000,
+        "hint": "上下文低于该长度不压缩；默认 16000。小群/私聊多可用 12000，500–1000 条/天可用 20000，工具多或上下文很长可用 24000。"
       },
       "cache_friendly": {
         "description": "保留前缀以利用 Prompt Cache",
