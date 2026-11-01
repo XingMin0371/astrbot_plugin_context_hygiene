@@ -109,7 +109,7 @@
 - `ConversationManager` 缺失时拒绝持久操作
 - 兼容 `update_conversation` 的关键字和位置参数签名
 - 增加备份目录不可用时的安全处理
-- 不引入 SQLite 或外部网络访问
+- 核心清理不引入 SQLite 或外部网络访问
 
 ## v1.0.0 — 2026-10-29
 

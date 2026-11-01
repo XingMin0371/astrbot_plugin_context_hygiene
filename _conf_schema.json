@@ -221,20 +221,20 @@
         "default": 4
       },
       "only_base64": {
-        "description": "只清理内联 Base64 图片",
-        "hint": "默认只替换旧历史里的 data:image/base64，保留普通 URL 图片和图片说明，减少无谓的前缀变化。",
+        "description": "清理旧图时只处理内联 Base64",
+        "hint": "只影响旧图片占位清理；新图描述仍可读取受信任本地路径或公网图片。",
         "type": "bool",
         "default": true
       },
       "ingest_caption": {
         "description": "图片入库短描述",
-        "hint": "首次请求时把图片转成标签+短描述，之后历史只保留这段文字。",
+        "hint": "首次遇到新图时调用图片 Provider 生成标签+描述；会产生额外模型调用和 Token。",
         "type": "bool",
         "default": true
       },
       "caption_provider_id": {
         "description": "图片描述 Provider",
-        "hint": "留空使用当前 Provider；需要该模型支持图片输入。",
+        "hint": "留空回退当前聊天 Provider；需要该 Provider 支持图片输入。",
         "type": "string",
         "default": ""
       },
@@ -252,7 +252,7 @@
         "description": "图片原图保留天数",
         "type": "int",
         "default": 15,
-        "hint": "图片原图 artifact 保留天数；默认 15。"
+        "hint": "图片原图 artifact 保留天数；默认 15，过期会被清理。"
       },
       "artifact_max_files": {
         "description": "图片原图最大文件数",
