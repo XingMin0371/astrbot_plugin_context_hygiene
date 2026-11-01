@@ -36,21 +36,39 @@
       }
     }
   },
-  "reminder": {
-    "description": "system_reminder",
-    "hint": "只处理历史中的提醒块，当前消息保留最新一条。",
+  "compression": {
+    "description": "旧对话压缩",
+    "hint": "默认使用确定性首尾截断，不调用模型，不产生额外 Token。",
     "type": "object",
     "items": {
-      "dedupe": {
-        "description": "去重历史提醒",
+      "enabled": {
+        "description": "启用旧对话压缩",
         "type": "bool",
         "default": true
       },
-      "keep_latest": {
-        "description": "保留当前消息最新提醒",
-        "hint": "关闭后当前消息的提醒也可能被移除，不建议关闭。",
+      "keep_ratio": {
+        "description": "旧文本保留比例",
+        "hint": "压缩后旧文本保留比例；默认 0.333。",
+        "type": "float",
+        "default": 0.333
+      },
+      "min_chars": {
+        "description": "最小压缩长度",
+        "type": "int",
+        "default": 16000,
+        "hint": "上下文低于该长度不压缩；默认 16000。小群/私聊多可用 12000，500–1000 条/天可用 20000，工具多或上下文很长可用 24000。"
+      },
+      "cache_friendly": {
+        "description": "保留前缀以利用 Prompt Cache",
+        "hint": "开启后最前面的消息不参与压缩/去重/图片替换/工具裁剪，减少缓存前缀变化。",
         "type": "bool",
         "default": true
+      },
+      "cache_prefix_messages": {
+        "description": "保留前缀消息数",
+        "hint": "cache_friendly 模式下前 N 条消息保持原样；默认 65。",
+        "type": "int",
+        "default": 65
       }
     }
   },
@@ -59,6 +77,35 @@
     "hint": "只处理完整调用对，避免留下孤立 tool 消息。",
     "type": "object",
     "items": {
+      "keep_recent_turns": {
+        "description": "工具消息保留轮数",
+        "hint": "只清理该轮数之前的工具调用/结果；默认 30。",
+        "type": "int",
+        "default": 30
+      },
+      "skip_cleanup": {
+        "description": "跳过工具消息清理",
+        "hint": "默认关闭；检测到其他工具压缩插件时自动跳过；手动开启会始终跳过工具消息清理。",
+        "type": "bool",
+        "default": false
+      },
+      "max_current_result_chars": {
+        "description": "当前工具结果单条硬上限",
+        "hint": "只截断当前轮工具结果，保护历史缓存前缀；默认 12000 字符。",
+        "type": "int",
+        "default": 12000
+      },
+      "summarize_long": {
+        "description": "截断超长工具结果",
+        "hint": "默认开启：只截断旧工具结果一次，带截断标记；不会重复截断。",
+        "type": "bool",
+        "default": true
+      },
+      "max_result_chars": {
+        "description": "工具结果最大字符数",
+        "type": "int",
+        "default": 6000
+      },
       "ttl_minutes": {
         "description": "工具调用保留分钟数",
         "hint": "历史消息带时间戳时才按时间判断；没有时间戳时按保留对数处理。活跃期间不清理。",
@@ -75,17 +122,6 @@
         "hint": "没有对应 tool_call 的结果会清理；关闭后保留。",
         "type": "bool",
         "default": true
-      },
-      "summarize_long": {
-        "description": "截断超长工具结果",
-        "hint": "默认开启：只截断旧工具结果一次，带截断标记；不会重复截断。",
-        "type": "bool",
-        "default": true
-      },
-      "max_result_chars": {
-        "description": "工具结果最大字符数",
-        "type": "int",
-        "default": 6000
       },
       "cleanup": {
         "description": "工具定义清理",
@@ -183,24 +219,6 @@
             ]
           }
         }
-      },
-      "keep_recent_turns": {
-        "description": "工具消息保留轮数",
-        "hint": "只清理该轮数之前的工具调用/结果；默认 30。",
-        "type": "int",
-        "default": 30
-      },
-      "skip_cleanup": {
-        "description": "跳过工具消息清理",
-        "hint": "默认关闭；检测到其他工具压缩插件时自动跳过；手动开启会始终跳过工具消息清理。",
-        "type": "bool",
-        "default": false
-      },
-      "max_current_result_chars": {
-        "description": "当前工具结果单条硬上限",
-        "hint": "只截断当前轮工具结果，保护历史缓存前缀；默认 12000 字符。",
-        "type": "int",
-        "default": 12000
       }
     }
   },
@@ -279,39 +297,21 @@
       }
     }
   },
-  "compression": {
-    "description": "旧对话压缩",
-    "hint": "默认使用确定性首尾截断，不调用模型，不产生额外 Token。",
+  "reminder": {
+    "description": "system_reminder",
+    "hint": "只处理历史中的提醒块，当前消息保留最新一条。",
     "type": "object",
     "items": {
-      "enabled": {
-        "description": "启用旧对话压缩",
+      "dedupe": {
+        "description": "去重历史提醒",
         "type": "bool",
         "default": true
       },
-      "keep_ratio": {
-        "description": "旧文本保留比例",
-        "hint": "压缩后旧文本保留比例；默认 0.333。",
-        "type": "float",
-        "default": 0.333
-      },
-      "min_chars": {
-        "description": "最小压缩长度",
-        "type": "int",
-        "default": 16000,
-        "hint": "上下文低于该长度不压缩；默认 16000。小群/私聊多可用 12000，500–1000 条/天可用 20000，工具多或上下文很长可用 24000。"
-      },
-      "cache_friendly": {
-        "description": "保留前缀以利用 Prompt Cache",
-        "hint": "开启后最前面的消息不参与压缩/去重/图片替换/工具裁剪，减少缓存前缀变化。",
+      "keep_latest": {
+        "description": "保留当前消息最新提醒",
+        "hint": "关闭后当前消息的提醒也可能被移除，不建议关闭。",
         "type": "bool",
         "default": true
-      },
-      "cache_prefix_messages": {
-        "description": "保留前缀消息数",
-        "hint": "cache_friendly 模式下前 N 条消息保持原样；默认 65。",
-        "type": "int",
-        "default": 65
       }
     }
   },
