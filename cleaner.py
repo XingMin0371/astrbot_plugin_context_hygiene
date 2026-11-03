@@ -7,9 +7,15 @@ unit-test and keeps the plugin's data transformations reviewable.
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
+import os
 import re
+import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 REMINDER_RE = re.compile(r"<system_reminder>.*?</system_reminder>", re.S | re.I)
@@ -33,6 +39,7 @@ class CleanStats:
     duplicate_user_messages_removed: int = 0
     duplicate_tool_pairs_removed: int = 0
     empty_messages_removed: int = 0
+    memory_blocks_removed: int = 0
     changed: bool = False
 
     @property
@@ -61,6 +68,7 @@ class CleanStats:
             "duplicate_user_messages_removed": self.duplicate_user_messages_removed,
             "duplicate_tool_pairs_removed": self.duplicate_tool_pairs_removed,
             "empty_messages_removed": self.empty_messages_removed,
+            "memory_blocks_removed": self.memory_blocks_removed,
             "changed": self.changed,
         }
 
@@ -642,6 +650,129 @@ def compress_old(messages: list[dict], cfg: Any, stats: CleanStats, before_chars
                 stats.messages_compressed += 1
 
 
+MEMORY_MARKER = "以下记忆是用第三人称写的"
+MEMORY_PLACEHOLDER = "[早期记忆块已省略]"
+_MEMORY_SEEN: dict[str, float] = {}
+_MEMORY_SEEN_LOCK = threading.Lock()
+
+
+def _memory_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return "\n".join(
+            str(part.get("text", ""))
+            for part in value
+            if isinstance(part, dict) and part.get("type") in TEXT_TYPES
+        )
+    return ""
+
+
+def _memory_seen_path() -> Path:
+    data_root = Path(__file__).resolve().parents[2]
+    return data_root / "plugin_data" / "astrbot_plugin_context_hygiene" / "memory_block_seen.json"
+
+
+def _load_memory_seen() -> dict[str, float]:
+    global _MEMORY_SEEN
+    with _MEMORY_SEEN_LOCK:
+        if _MEMORY_SEEN:
+            return dict(_MEMORY_SEEN)
+        try:
+            data = json.loads(_memory_seen_path().read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                _MEMORY_SEEN = {str(k): float(v) for k, v in data.items()}
+        except Exception:
+            _MEMORY_SEEN = {}
+        return dict(_MEMORY_SEEN)
+
+
+def _save_memory_seen(data: dict[str, float]) -> None:
+    global _MEMORY_SEEN
+    cutoff = time.time() - 30 * 86400
+    data = {k: v for k, v in data.items() if v >= cutoff}
+    with _MEMORY_SEEN_LOCK:
+        _MEMORY_SEEN = dict(data)
+        try:
+            path = _memory_seen_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
+
+
+def _memory_message_time(message: dict) -> float | None:
+    for key in ("timestamp", "ts", "created_at", "time"):
+        value = message.get(key)
+        if value is None:
+            continue
+        try:
+            if isinstance(value, (int, float)):
+                return float(value)
+            text = str(value).strip()
+            if text.endswith("Z"):
+                text = text[:-1] + "+00:00"
+            return datetime.fromisoformat(text).timestamp()
+        except Exception:
+            continue
+    return None
+
+
+def clean_memory_blocks(messages: list[dict], cfg: Any, stats: CleanStats) -> None:
+    """Keep the newest memory injections and protect blocks younger than min_age."""
+    if not as_bool(get_cfg(cfg, "memory_blocks.enabled", True), True):
+        return
+    keep = max(0, as_int(get_cfg(cfg, "memory_blocks.keep_latest", 5), 5))
+    try:
+        min_age_hours = max(0.0, float(get_cfg(cfg, "memory_blocks.min_age_hours", 12) or 12))
+    except (TypeError, ValueError):
+        min_age_hours = 12.0
+    min_age = min_age_hours * 3600
+    now = time.time()
+    seen = _load_memory_seen()
+    changed_seen = False
+    hits: list[tuple[int, str]] = []
+    for i, message in enumerate(messages):
+        if not isinstance(message, dict) or message.get("role") != "user":
+            continue
+        text = _memory_text(message.get("content"))
+        if MEMORY_MARKER not in text:
+            continue
+        hits.append((i, text))
+        key = hashlib.sha1(text.encode("utf-8", "ignore")).hexdigest()
+        if key not in seen:
+            seen[key] = now
+            changed_seen = True
+    if changed_seen:
+        _save_memory_seen(seen)
+    if len(hits) <= keep:
+        return
+    drop = hits[: len(hits) - keep] if keep else hits
+    for i, text in drop:
+        message = messages[i]
+        age_start = _memory_message_time(message) or seen.get(
+            hashlib.sha1(text.encode("utf-8", "ignore")).hexdigest()
+        )
+        if age_start is not None and now - age_start < min_age:
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            _set_content(message, MEMORY_PLACEHOLDER)
+        elif isinstance(content, list):
+            new_parts = []
+            for part in content:
+                if (
+                    isinstance(part, dict)
+                    and part.get("type") in TEXT_TYPES
+                    and MEMORY_MARKER in str(part.get("text", ""))
+                ):
+                    part = dict(part)
+                    part["text"] = MEMORY_PLACEHOLDER
+                new_parts.append(part)
+            _set_content(message, new_parts)
+        stats.memory_blocks_removed += 1
+
+
 def clean_history(messages: Any, cfg: Any) -> tuple[list[dict], CleanStats]:
     """Return a cleaned copy and statistics; never mutates the input list."""
     if not isinstance(messages, list):
@@ -657,6 +788,7 @@ def clean_history(messages: Any, cfg: Any) -> tuple[list[dict], CleanStats]:
         clean_tools(working, cfg, stats)
     clean_images(working, cfg, stats)
     cap_current_tool_results(working, cfg, stats)
+    clean_memory_blocks(working, cfg, stats)
     compress_old(working, cfg, stats, stats.before_chars)
     # Drop empty assistant/think shells, and old user turns that consisted
     # only of a system reminder.  Keep the recent window intact.

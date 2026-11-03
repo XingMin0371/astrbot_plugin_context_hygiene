@@ -48,6 +48,30 @@
       }
     }
   },
+  "memory_blocks": {
+    "description": "记忆注入块清理",
+    "hint": "只清理历史里重复注入的记忆副本，不删除 memory5 日记、重要记忆或提醒。",
+    "type": "object",
+    "items": {
+      "enabled": {
+        "description": "启用记忆块清理",
+        "type": "bool",
+        "default": true
+      },
+      "keep_latest": {
+        "description": "保留最新记忆块份数",
+        "type": "int",
+        "default": 5,
+        "hint": "默认保留最近 5 份。"
+      },
+      "min_age_hours": {
+        "description": "记忆块最短保留小时数",
+        "type": "float",
+        "default": 12,
+        "hint": "默认 12 小时；没有时间戳时按插件第一次看到该块的时间计算。"
+      }
+    }
+  },
   "turn_guard": {
     "description": "工具循环守卫（请求级）",
     "hint": "只改本轮请求：超过步数/工具次数/时间/新增Token，或重复调用时禁用后续工具并收尾；不改历史前缀。",

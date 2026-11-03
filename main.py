@@ -907,6 +907,7 @@ class ContextHygiene(Star):
             f"重复用户消息：-{stats.duplicate_user_messages_removed}",
             f"重复工具对：-{stats.duplicate_tool_pairs_removed}",
             f"空消息残留：-{stats.empty_messages_removed}",
+            f"记忆注入块：-{stats.memory_blocks_removed}",
         ]
         if not stats.changed:
             lines.append("结果：无需清理")
