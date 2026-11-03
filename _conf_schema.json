@@ -49,8 +49,8 @@
     }
   },
   "memory_blocks": {
-    "description": "记忆注入块清理",
-    "hint": "只清理历史里重复注入的记忆副本，不删除 memory5 日记、重要记忆或提醒。",
+    "description": "只清理历史里重复注入的记忆副本，不删除记忆。",
+    "hint": "只清理历史里重复注入的记忆副本，不删除记忆。",
     "type": "object",
     "items": {
       "enabled": {
