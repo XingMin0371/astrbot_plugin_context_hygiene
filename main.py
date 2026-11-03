@@ -779,15 +779,19 @@ class ContextHygiene(Star):
             path = Path(get_astrbot_data_path()) / "cmd_config.json"
             config = json.loads(path.read_text(encoding="utf-8-sig"))
             values = []
+            # AstrBot's standard field is max_context_tokens; accept common
+            # aliases so non-DeepSeek providers can still use auto thresholds.
             for provider in config.get("provider", []) or []:
                 if not isinstance(provider, dict):
                     continue
-                try:
-                    value = int(provider.get("max_context_tokens") or 0)
-                except (TypeError, ValueError):
-                    value = 0
-                if value > 0:
-                    values.append(value)
+                for field in ("max_context_tokens", "context_window", "max_input_tokens", "max_context"):
+                    try:
+                        value = int(provider.get(field) or 0)
+                    except (TypeError, ValueError):
+                        value = 0
+                    if value > 0:
+                        values.append(value)
+                        break
             return max(values) if values else 0
         except Exception:
             return 0
@@ -795,8 +799,8 @@ class ContextHygiene(Star):
     def _effective_thresholds(self) -> dict:
         """Auto thresholds derive from the model window; fall back to 64k/96k."""
         auto = as_bool(self._cfg("basic.auto_threshold", True), True)
-        ratio = float(self._cfg("basic.threshold_ratio", 0.5) or 0.5)
-        hard_ratio = float(self._cfg("compression.hard_threshold_ratio", 0.75) or 0.75)
+        ratio = float(self._cfg("basic.threshold_ratio", 0.6) or 0.6)
+        hard_ratio = float(self._cfg("compression.hard_threshold_ratio", 0.8) or 0.8)
         window = self._context_window_tokens() if auto else 0
         if window > 0:
             normal = max(1000, int(window * max(0.1, min(0.9, ratio))))

@@ -112,7 +112,7 @@ keep_recent_turns: 24
 cache_guard_minutes: 75
 
 auto_threshold: true
-threshold_ratio: 0.5
+threshold_ratio: 0.6
 
 turn_guard:
   enabled: true
@@ -147,7 +147,7 @@ images:
   placeholder: "[图片已省略]"
 
 compression:
-  hard_threshold_ratio: 0.75
+  hard_threshold_ratio: 0.8
   hard_threshold_chars: 174545
   hard_threshold_tokens: 96000
   enabled: true
@@ -194,9 +194,9 @@ tools.skip_cleanup: false
 
 ```yaml
 auto_threshold: true
-threshold_ratio: 0.5
+threshold_ratio: 0.6
 compression:
-  hard_threshold_ratio: 0.75
+  hard_threshold_ratio: 0.8
   hard_threshold_chars: 174545
   hard_threshold_tokens: 96000
 ```
@@ -204,8 +204,8 @@ compression:
 开启 `auto_threshold` 时，优先读取模型的 `max_context_tokens`：
 
 ```text
-普通阈值 = 模型窗口 × 0.5
-兜底阈值 = 模型窗口 × 0.75
+普通阈值 = 模型窗口 × 0.6
+兜底阈值 = 模型窗口 × 0.8
 字符数 = Token ÷ 0.55
 ```
 
