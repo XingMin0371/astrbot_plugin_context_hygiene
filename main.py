@@ -816,12 +816,40 @@ class ContextHygiene(Star):
             "window": window,
         }
 
-    def _hard_limit_hit(self, contexts) -> bool:
+    @staticmethod
+    def _text_only_chars(value) -> int:
+        if isinstance(value, str):
+            return len(value)
+        if isinstance(value, list):
+            total = 0
+            for item in value:
+                if isinstance(item, str):
+                    total += len(item)
+                elif isinstance(item, dict) and item.get("type") in ("text", "plain"):
+                    total += len(str(item.get("text", "")))
+            return total
+        return 0
+
+    def _hard_input_chars(self, req: ProviderRequest, contexts: list[dict]) -> int:
+        """Compressible history + tool schemas + current prompt; no system/persona."""
+        chars = sum(message_chars(m) for m in contexts)
+        try:
+            toolset = getattr(req, "func_tool", None)
+            tools = getattr(toolset, "tools", None)
+            if isinstance(tools, list):
+                chars += len(json.dumps(tools, ensure_ascii=False, default=str))
+        except Exception:
+            pass
+        chars += self._text_only_chars(getattr(req, "prompt", None))
+        chars += self._text_only_chars(getattr(req, "extra_user_content_parts", None))
+        return chars
+
+    def _hard_limit_hit(self, req: ProviderRequest, contexts) -> bool:
         """Cache protection must not starve compression near the model limit."""
         if not isinstance(contexts, list) or not contexts:
             return False
         thresholds = self._effective_thresholds()
-        chars = sum(message_chars(m) for m in contexts)
+        chars = self._hard_input_chars(req, contexts)
         return chars >= thresholds["hard_chars"] or estimate_tokens(chars) >= thresholds["hard_tokens"]
 
     @filter.on_llm_request()
@@ -841,7 +869,7 @@ class ContextHygiene(Star):
             contexts = getattr(req, "contexts", None)
             if not isinstance(contexts, list) or not contexts:
                 return
-            hard_hit = self._hard_limit_hit(contexts)
+            hard_hit = self._hard_limit_hit(req, contexts)
             if active and not hard_hit:
                 # Do not rewrite a warm prompt-cache prefix during an active
                 # conversation.  Cleanup runs once after the guard expires.
