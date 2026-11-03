@@ -18,7 +18,7 @@
       },
       "threshold_tokens": {
         "description": "压缩触发估算 Token",
-        "hint": "模型窗口未知时的普通 Token 回退值；默认 64000。自动模式优先用模型 max_context_tokens × 0.5。",
+        "hint": "模型窗口未知时的普通 Token 回退值；默认 64000。自动模式优先用模型 max_context_tokens × 0.6。",
         "type": "int",
         "default": 64000
       },
@@ -127,7 +127,7 @@
       },
       "hard_threshold_tokens": {
         "description": "兜底压缩估算 Token",
-        "hint": "模型窗口未知时的兜底 Token 回退值；默认 96000。自动模式优先用模型 max_context_tokens × 0.75。",
+        "hint": "模型窗口未知时的兜底 Token 回退值；默认 96000。自动模式优先用模型 max_context_tokens × 0.8。",
         "type": "int",
         "default": 96000
       },
