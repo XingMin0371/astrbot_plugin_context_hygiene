@@ -12,15 +12,15 @@
       },
       "threshold_chars": {
         "description": "压缩触发字符数",
-        "hint": "历史文本超过该字符数才压缩旧对话；默认 126500。",
+        "hint": "模型窗口未知时的普通字符回退值：约 64K Token × 1.818；自动模式会按模型窗口重算。",
         "type": "int",
-        "default": 126500
+        "default": 116364
       },
       "threshold_tokens": {
         "description": "压缩触发估算 Token",
-        "hint": "估算 Token 超过该值才压缩旧对话；默认 75000。",
+        "hint": "模型窗口未知时的普通 Token 回退值；默认 64000。自动模式优先用模型 max_context_tokens × 0.5。",
         "type": "int",
-        "default": 75000
+        "default": 64000
       },
       "keep_recent_turns": {
         "description": "保留最近轮数",
@@ -33,6 +33,18 @@
         "hint": "最近 N 分钟内有请求时跳过旧上下文清理；默认 75。中等群建议 75，缓存优先可用 90。",
         "type": "int",
         "default": 75
+      },
+      "auto_threshold": {
+        "description": "自动按模型窗口计算压缩阈值",
+        "type": "bool",
+        "default": true,
+        "hint": "开启后优先读取模型 max_context_tokens；模型未提供时回退到普通 64K / 兜底 96K。"
+      },
+      "threshold_ratio": {
+        "description": "普通压缩阈值比例",
+        "type": "float",
+        "default": 0.5,
+        "hint": "默认取模型上下文窗口的 1/2；仅自动模式生效。"
       }
     }
   },
@@ -107,6 +119,18 @@
     "hint": "默认使用确定性首尾截断，不调用模型，不产生额外 Token。",
     "type": "object",
     "items": {
+      "hard_threshold_chars": {
+        "description": "兜底压缩字符数",
+        "hint": "模型窗口未知时的兜底字符回退值：约 96K Token × 1.818；自动模式会按模型窗口重算。",
+        "type": "int",
+        "default": 174545
+      },
+      "hard_threshold_tokens": {
+        "description": "兜底压缩估算 Token",
+        "hint": "模型窗口未知时的兜底 Token 回退值；默认 96000。自动模式优先用模型 max_context_tokens × 0.75。",
+        "type": "int",
+        "default": 96000
+      },
       "enabled": {
         "description": "启用旧对话压缩",
         "type": "bool",
@@ -135,6 +159,12 @@
         "hint": "cache_friendly 模式下前 N 条消息保持原样；默认 65。",
         "type": "int",
         "default": 65
+      },
+      "hard_threshold_ratio": {
+        "description": "兜底压缩阈值比例",
+        "type": "float",
+        "default": 0.75,
+        "hint": "默认取模型上下文窗口的 3/4；仅自动模式生效。"
       }
     }
   },

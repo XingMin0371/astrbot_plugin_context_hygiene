@@ -106,10 +106,13 @@ data/plugin_data/astrbot_plugin_context_hygiene/backups/
 
 ```yaml
 enabled: true
-threshold_chars: 126500
-threshold_tokens: 75000
+threshold_chars: 116364
+threshold_tokens: 64000
 keep_recent_turns: 24
 cache_guard_minutes: 75
+
+auto_threshold: true
+threshold_ratio: 0.5
 
 turn_guard:
   enabled: true
@@ -144,6 +147,9 @@ images:
   placeholder: "[图片已省略]"
 
 compression:
+  hard_threshold_ratio: 0.75
+  hard_threshold_chars: 174545
+  hard_threshold_tokens: 96000
   enabled: true
   keep_ratio: 0.333
   min_chars: 16000
@@ -183,6 +189,34 @@ tools.skip_cleanup: false
 
 `skip_cleanup` 手动开启后，本插件不再清理工具调用/结果。  
 检测到其他工具压缩插件开启时会自动跳过；没有检测到则按默认值正常清理。
+
+### 自动阈值与兜底压缩
+
+```yaml
+auto_threshold: true
+threshold_ratio: 0.5
+compression:
+  hard_threshold_ratio: 0.75
+  hard_threshold_chars: 174545
+  hard_threshold_tokens: 96000
+```
+
+开启 `auto_threshold` 时，优先读取模型的 `max_context_tokens`：
+
+```text
+普通阈值 = 模型窗口 × 0.5
+兜底阈值 = 模型窗口 × 0.75
+字符数 = Token ÷ 0.55
+```
+
+模型没有提供窗口时，回退到：
+
+```text
+普通：64000 Token / 116364 字符
+兜底：96000 Token / 174545 字符
+```
+
+超过兜底阈值时，即使缓存保护仍有效，也强制清理/压缩一次，避免持续聊天把清理饿死。
 
 ### 压缩比例
 

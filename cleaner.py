@@ -67,8 +67,8 @@ class CleanStats:
 
 DEFAULTS: dict[str, Any] = {
     "enabled": True,
-    "threshold_chars": 126500,
-    "threshold_tokens": 75000,
+    "threshold_chars": 116364,
+    "threshold_tokens": 64000,
     "keep_recent_turns": 24,
     "reminder.dedupe": True,
     "reminder.keep_latest": True,

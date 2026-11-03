@@ -56,6 +56,7 @@ try:
         as_bool,
         as_int,
         clean_history,
+        estimate_tokens,
         flatten_config,
         get_cfg,
         message_chars,
@@ -67,6 +68,7 @@ except ImportError:  # local/single-file import fallback
         as_bool,
         as_int,
         clean_history,
+        estimate_tokens,
         flatten_config,
         get_cfg,
         message_chars,
@@ -423,6 +425,15 @@ class ContextHygiene(Star):
             cfg = dict(self.config) if hasattr(self.config, "items") else {}
         if not isinstance(cfg, dict):
             cfg = {}
+        thresholds = self._effective_thresholds()
+        cfg["threshold_chars"] = thresholds["normal_chars"]
+        cfg["threshold_tokens"] = thresholds["normal_tokens"]
+        compression = cfg.get("compression")
+        if not isinstance(compression, dict):
+            compression = {}
+            cfg["compression"] = compression
+        compression["hard_threshold_chars"] = thresholds["hard_chars"]
+        compression["hard_threshold_tokens"] = thresholds["hard_tokens"]
         try:
             from astrbot.core.utils.astrbot_path import get_astrbot_data_path
             path = Path(get_astrbot_data_path()) / "config" / "memory5_config.json"
@@ -760,6 +771,55 @@ class ContextHygiene(Star):
         last = self._last_request_at.get(umo)
         return bool(last and now - last < minutes * 60)
 
+    def _context_window_tokens(self) -> int:
+        """Best-effort model window from AstrBot config; 0 means unknown."""
+        try:
+            from astrbot.core.utils.astrbot_path import get_astrbot_data_path
+
+            path = Path(get_astrbot_data_path()) / "cmd_config.json"
+            config = json.loads(path.read_text(encoding="utf-8-sig"))
+            values = []
+            for provider in config.get("provider", []) or []:
+                if not isinstance(provider, dict):
+                    continue
+                try:
+                    value = int(provider.get("max_context_tokens") or 0)
+                except (TypeError, ValueError):
+                    value = 0
+                if value > 0:
+                    values.append(value)
+            return max(values) if values else 0
+        except Exception:
+            return 0
+
+    def _effective_thresholds(self) -> dict:
+        """Auto thresholds derive from the model window; fall back to 64k/96k."""
+        auto = as_bool(self._cfg("basic.auto_threshold", True), True)
+        ratio = float(self._cfg("basic.threshold_ratio", 0.5) or 0.5)
+        hard_ratio = float(self._cfg("compression.hard_threshold_ratio", 0.75) or 0.75)
+        window = self._context_window_tokens() if auto else 0
+        if window > 0:
+            normal = max(1000, int(window * max(0.1, min(0.9, ratio))))
+            hard = max(normal + 1, int(window * max(0.2, min(0.95, hard_ratio))))
+        else:
+            normal = max(1000, as_int(self._cfg("basic.threshold_tokens", 64000), 64000))
+            hard = max(normal + 1, as_int(self._cfg("compression.hard_threshold_tokens", 96000), 96000))
+        return {
+            "normal_tokens": normal,
+            "normal_chars": max(500, int(normal / 0.55)),
+            "hard_tokens": hard,
+            "hard_chars": max(500, int(hard / 0.55)),
+            "window": window,
+        }
+
+    def _hard_limit_hit(self, contexts) -> bool:
+        """Cache protection must not starve compression near the model limit."""
+        if not isinstance(contexts, list) or not contexts:
+            return False
+        thresholds = self._effective_thresholds()
+        chars = sum(message_chars(m) for m in contexts)
+        return chars >= thresholds["hard_chars"] or estimate_tokens(chars) >= thresholds["hard_tokens"]
+
     @filter.on_llm_request()
     async def filter_request(self, event: AstrMessageEvent, req: ProviderRequest) -> None:
         """Clean only the request copy.  The stored conversation is untouched."""
@@ -774,15 +834,20 @@ class ContextHygiene(Star):
             if len(self._last_request_at) > 32:
                 self._last_request_at.pop(next(iter(self._last_request_at)))
             self._apply_turn_guard(event, req, umo, now)
-            if active:
-                # Do not rewrite a warm prompt-cache prefix during an active
-                # conversation.  Cleanup runs once after the guard expires.
-                return
-            self._maybe_cleanup_backups()
-            self._apply_tool_policy(event, req)
             contexts = getattr(req, "contexts", None)
             if not isinstance(contexts, list) or not contexts:
                 return
+            hard_hit = self._hard_limit_hit(contexts)
+            if active and not hard_hit:
+                # Do not rewrite a warm prompt-cache prefix during an active
+                # conversation.  Cleanup runs once after the guard expires.
+                return
+            if active and hard_hit:
+                logger.warning(
+                    "context_hygiene: hard threshold reached, forcing cleanup despite cache guard"
+                )
+            self._maybe_cleanup_backups()
+            self._apply_tool_policy(event, req)
             cleaned, stats = self._clean_contexts_cached(umo, contexts)
             if stats.changed:
                 req.contexts = cleaned
