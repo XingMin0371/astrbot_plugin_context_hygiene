@@ -111,6 +111,19 @@ threshold_tokens: 75000
 keep_recent_turns: 24
 cache_guard_minutes: 75
 
+turn_guard:
+  enabled: true
+  interactive:
+    max_steps: 20
+    max_tool_calls: 8
+    max_turn_seconds: 120
+    max_turn_new_tokens: 9000
+  background:
+    max_steps: 30
+    max_tool_calls: 12
+    max_turn_seconds: 240
+    max_turn_new_tokens: 15000
+
 reminder:
   dedupe: true
   keep_latest: true
@@ -142,6 +155,17 @@ persistent:
   require_admin: true
   backup_retention_days: 15
 ```
+
+### 记忆注入块清理
+
+```yaml
+memory_blocks:
+  enabled: true
+  keep_latest: 5
+  min_age_hours: 12
+```
+
+历史里只保留最近 5 份记忆注入块；不足 12 小时的旧块不清理。没有时间戳时，以插件第一次看到该块的时间计算。
 
 ### 当前工具结果硬上限
 
@@ -188,6 +212,41 @@ tool result
 `ttl_minutes` 只在消息带有时间戳时参与判断；请求上下文通常没有时间戳，因此主要按保留对数控制。
 
 超长工具结果默认不压缩；开启后只做确定性截断。
+
+### 工具循环守卫
+
+只影响当前请求，不改历史前缀。
+
+```yaml
+turn_guard:
+  enabled: true
+  interactive:
+    max_steps: 20
+    max_tool_calls: 8
+    max_turn_seconds: 120
+    max_turn_new_tokens: 9000
+  background:
+    max_steps: 30
+    max_tool_calls: 12
+    max_turn_seconds: 240
+    max_turn_new_tokens: 15000
+```
+
+- `max_steps`：本轮 assistant 工具轮数 + 最终回答
+- `max_tool_calls`：本轮工具调用总次数
+- `max_turn_seconds`：本轮实际耗时
+- `max_turn_new_tokens`：只估算本轮新增上下文，不把缓存命中的历史算进去；0 为不限
+- 同一个工具和参数重复 3 次，或同一个工具结果重复 2 次，也会收口
+
+触发后：
+
+```text
+req.func_tool = None
+在当前 prompt 末尾追加“禁止继续调用工具，直接收尾”
+```
+
+不会修改 system prompt 或历史 contexts。  
+普通聊天使用 `interactive`；会话 UMO 含 `cron`、`scheduler`、`scheduled`、`task:` 时使用 `background`。
 
 ## 安全去重与残留清理
 
@@ -347,7 +406,7 @@ astrbot.astrbot.*
 
 ## 版本
 
-`v1.2.3`
+`v1.2.5`
 
 ## 图片原图与加密
 

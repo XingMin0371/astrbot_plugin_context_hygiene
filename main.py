@@ -74,7 +74,7 @@ except ImportError:  # local/single-file import fallback
     from tool_policy import clean_tool_definitions, gate_official_tools  # type: ignore[no-redef]
 
 PLUGIN_NAME = "astrbot_plugin_context_hygiene"
-VERSION = "1.2.3"
+VERSION = "1.2.5"
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
 IMAGE_ARTIFACT_DIR_NAME = "image_artifacts"
 
@@ -96,6 +96,7 @@ class ContextHygiene(Star):
         self._context_cache: dict[str, tuple[str, int, list[dict]]] = {}
         self._last_request_at: dict[str, float] = {}
         self._last_artifact_cleanup = 0.0
+        self._turn_guard_state: dict[str, dict] = {}
 
     def _cfg(self, key: str, default):
         if key in self._flat:
@@ -201,6 +202,157 @@ class ContextHygiene(Star):
                     names.append(str(name))
             return names
         return []
+
+    @staticmethod
+    def _guard_message_text(content) -> str:
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, dict):
+                    value = item.get("text")
+                    if value is not None:
+                        parts.append(str(value))
+                elif isinstance(item, str):
+                    parts.append(item)
+            return "\n".join(parts)
+        return "" if content is None else str(content)
+
+    def _turn_guard_limits(self, umo: str) -> dict:
+        low = umo.lower()
+        background = any(token in low for token in ("cron", "scheduler", "scheduled", "task:"))
+        prefix = "background" if background else "interactive"
+        defaults = {
+            "interactive": {"max_steps": 20, "max_tool_calls": 8, "max_turn_seconds": 120, "max_turn_new_tokens": 9000},
+            "background": {"max_steps": 30, "max_tool_calls": 12, "max_turn_seconds": 240, "max_turn_new_tokens": 15000},
+        }[prefix]
+        return {
+            "background": background,
+            "max_steps": max(1, as_int(self._cfg(f"turn_guard.{prefix}.max_steps", defaults["max_steps"]), defaults["max_steps"])),
+            "max_tool_calls": max(0, as_int(self._cfg(f"turn_guard.{prefix}.max_tool_calls", defaults["max_tool_calls"]), defaults["max_tool_calls"])),
+            "max_turn_seconds": max(1, as_int(self._cfg(f"turn_guard.{prefix}.max_turn_seconds", defaults["max_turn_seconds"]), defaults["max_turn_seconds"])),
+            "max_turn_new_tokens": max(0, as_int(self._cfg(f"turn_guard.{prefix}.max_turn_new_tokens", defaults["max_turn_new_tokens"]), defaults["max_turn_new_tokens"])),
+        }
+
+    def _apply_turn_guard(self, event: AstrMessageEvent, req: ProviderRequest, umo: str, now: float) -> None:
+        """Stop a runaway tool loop without touching the cached history prefix."""
+        if not as_bool(self._cfg("turn_guard.enabled", True), True):
+            return
+        contexts = getattr(req, "contexts", None)
+        if not isinstance(contexts, list):
+            contexts = []
+
+        last_user_idx = -1
+        for idx, message in enumerate(contexts):
+            if isinstance(message, dict) and message.get("role") == "user":
+                last_user_idx = idx
+        user_messages = [m for m in contexts if isinstance(m, dict) and m.get("role") == "user"]
+        sig_text = ""
+        if user_messages:
+            sig_text = self._guard_message_text(user_messages[-1].get("content"))
+        else:
+            sig_text = str(getattr(req, "prompt", "") or "")
+        sig = hashlib.sha1(
+            f"{len(user_messages)}:{sig_text}".encode("utf-8", "ignore")
+        ).hexdigest()
+
+        state = self._turn_guard_state.get(umo)
+        if (
+            not isinstance(state, dict)
+            or state.get("sig") != sig
+            or now - float(state.get("last_seen", 0.0) or 0.0) > 600
+        ):
+            state = {
+                "sig": sig,
+                "started": now,
+                "last_seen": now,
+                "start_chars": sum(message_chars(m) for m in contexts),
+                "blocked": False,
+            }
+            self._turn_guard_state[umo] = state
+            if len(self._turn_guard_state) > 64:
+                oldest = min(
+                    self._turn_guard_state,
+                    key=lambda key: float(self._turn_guard_state[key].get("last_seen", 0.0) or 0.0),
+                )
+                if oldest != umo:
+                    self._turn_guard_state.pop(oldest, None)
+        state["last_seen"] = now
+
+        tool_calls = 0
+        tool_rounds = 0
+        call_counts: dict[str, int] = {}
+        result_counts: dict[str, int] = {}
+        for message in contexts[last_user_idx + 1:]:
+            if not isinstance(message, dict):
+                continue
+            role = message.get("role")
+            if role == "assistant":
+                calls = message.get("tool_calls") or []
+                if not isinstance(calls, list) or not calls:
+                    continue
+                tool_rounds += 1
+                for call in calls:
+                    if not isinstance(call, dict):
+                        continue
+                    fn = call.get("function")
+                    fn = fn if isinstance(fn, dict) else {}
+                    name = str(fn.get("name") or call.get("name") or "")
+                    args = fn.get("arguments", call.get("arguments", call.get("args", {})))
+                    try:
+                        arg_text = json.dumps(args, ensure_ascii=False, sort_keys=True)
+                    except Exception:
+                        arg_text = str(args)
+                    key = hashlib.sha1(f"{name}:{arg_text}".encode("utf-8", "ignore")).hexdigest()
+                    call_counts[key] = call_counts.get(key, 0) + 1
+                    tool_calls += 1
+            elif role == "tool":
+                text = self._guard_message_text(message.get("content"))
+                if not text or text.strip() == "[工具结果已压缩]":
+                    continue
+                key = hashlib.sha1(text.encode("utf-8", "ignore")).hexdigest()
+                result_counts[key] = result_counts.get(key, 0) + 1
+
+        limits = self._turn_guard_limits(umo)
+        current_chars = sum(message_chars(m) for m in contexts)
+        new_tokens = max(0, int((current_chars - int(state.get("start_chars", current_chars))) / 3))
+        elapsed = max(0.0, now - float(state.get("started", now)))
+        repeat_call = max(call_counts.values(), default=0)
+        repeat_result = max(result_counts.values(), default=0)
+        reason = ""
+        if tool_rounds + 1 > limits["max_steps"]:
+            reason = "max_steps"
+        elif limits["max_tool_calls"] and tool_calls > limits["max_tool_calls"]:
+            reason = "max_tool_calls"
+        elif elapsed > limits["max_turn_seconds"]:
+            reason = "max_turn_seconds"
+        elif limits["max_turn_new_tokens"] and new_tokens > limits["max_turn_new_tokens"]:
+            reason = "max_turn_new_tokens"
+        elif repeat_call >= 3:
+            reason = "repeat_tool_call"
+        elif repeat_result >= 2:
+            reason = "repeat_tool_result"
+
+        if not reason:
+            return
+        if not state.get("blocked"):
+            state["blocked"] = True
+            logger.warning(
+                "context_hygiene: turn guard stopped | umo=%s | reason=%s | steps=%s | calls=%s | new_tokens~%s | elapsed=%.1fs",
+                umo, reason, tool_rounds + 1, tool_calls, new_tokens, elapsed,
+            )
+        req.func_tool = None
+        note = (
+            f"\n\n[工具循环守卫] 本轮已触发 {reason} 限制，禁止继续调用工具。"
+            "请基于现有结果直接回答；信息不足就说明不足，不要重复调用。"
+        )
+        prompt = getattr(req, "prompt", None)
+        if isinstance(prompt, str):
+            if "[工具循环守卫]" not in prompt:
+                req.prompt = prompt.rstrip() + note
+        else:
+            req.prompt = note.strip()
 
     def _apply_tool_policy(self, event: AstrMessageEvent, req: ProviderRequest) -> None:
         """Apply tool-definition cleanup and optional official-tool gating.
@@ -621,6 +773,7 @@ class ContextHygiene(Star):
             self._last_request_at[umo] = now
             if len(self._last_request_at) > 32:
                 self._last_request_at.pop(next(iter(self._last_request_at)))
+            self._apply_turn_guard(event, req, umo, now)
             if active:
                 # Do not rewrite a warm prompt-cache prefix during an active
                 # conversation.  Cleanup runs once after the guard expires.

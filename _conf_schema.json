@@ -36,6 +36,72 @@
       }
     }
   },
+  "turn_guard": {
+    "description": "工具循环守卫（请求级）",
+    "hint": "只改本轮请求：超过步数/工具次数/时间/新增Token，或重复调用时禁用后续工具并收尾；不改历史前缀。",
+    "type": "object",
+    "items": {
+      "enabled": {
+        "description": "启用工具循环守卫",
+        "type": "bool",
+        "default": true
+      },
+      "interactive": {
+        "description": "前台/普通聊天预算",
+        "type": "object",
+        "items": {
+          "max_steps": {
+            "description": "最多模型步数",
+            "type": "int",
+            "default": 20
+          },
+          "max_tool_calls": {
+            "description": "最多工具调用次数",
+            "type": "int",
+            "default": 8
+          },
+          "max_turn_seconds": {
+            "description": "单轮最长秒数",
+            "type": "int",
+            "default": 120
+          },
+          "max_turn_new_tokens": {
+            "description": "单轮新增Token上限",
+            "type": "int",
+            "default": 9000,
+            "hint": "只算本轮新增，不把缓存命中的历史算进去；0=不限。"
+          }
+        }
+      },
+      "background": {
+        "description": "后台/定时任务预算",
+        "type": "object",
+        "items": {
+          "max_steps": {
+            "description": "最多模型步数",
+            "type": "int",
+            "default": 30
+          },
+          "max_tool_calls": {
+            "description": "最多工具调用次数",
+            "type": "int",
+            "default": 12
+          },
+          "max_turn_seconds": {
+            "description": "单轮最长秒数",
+            "type": "int",
+            "default": 240
+          },
+          "max_turn_new_tokens": {
+            "description": "单轮新增Token上限",
+            "type": "int",
+            "default": 15000,
+            "hint": "只算本轮新增；0=不限。"
+          }
+        }
+      }
+    }
+  },
   "compression": {
     "description": "旧对话压缩",
     "hint": "默认使用确定性首尾截断，不调用模型，不产生额外 Token。",
@@ -299,24 +365,6 @@
       }
     }
   },
-  "reminder": {
-    "description": "system_reminder",
-    "hint": "只处理历史中的提醒块，当前消息保留最新一条。",
-    "type": "object",
-    "items": {
-      "dedupe": {
-        "description": "去重历史提醒",
-        "type": "bool",
-        "default": true
-      },
-      "keep_latest": {
-        "description": "保留当前消息最新提醒",
-        "hint": "关闭后当前消息的提醒也可能被移除，不建议关闭。",
-        "type": "bool",
-        "default": true
-      }
-    }
-  },
   "persistent": {
     "description": "持久清理（高风险）",
     "hint": "默认关闭；只通过 ConversationManager 官方 API 写入，并先做逻辑备份。",
@@ -378,6 +426,24 @@
         "description": "逻辑备份保留天数",
         "type": "int",
         "default": 15
+      }
+    }
+  },
+  "reminder": {
+    "description": "system_reminder",
+    "hint": "只处理历史中的提醒块，当前消息保留最新一条。",
+    "type": "object",
+    "items": {
+      "dedupe": {
+        "description": "去重历史提醒",
+        "type": "bool",
+        "default": true
+      },
+      "keep_latest": {
+        "description": "保留当前消息最新提醒",
+        "hint": "关闭后当前消息的提醒也可能被移除，不建议关闭。",
+        "type": "bool",
+        "default": true
       }
     }
   }
