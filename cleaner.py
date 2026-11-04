@@ -94,7 +94,7 @@ DEFAULTS: dict[str, Any] = {
     "compression.keep_ratio": 0.333,
     "compression.min_chars": 16000,
     "compression.cache_friendly": True,
-    "compression.cache_prefix_messages": 65,
+    "compression.cache_prefix_messages": 24,
     "persistent.allow": False,
     "persistent.require_admin": True,
     "persistent.backup_retention_days": 15,
@@ -281,7 +281,7 @@ def _cache_start(cfg: Any) -> int:
     """First index that may be rewritten when cache-friendly mode is on."""
     if not as_bool(get_cfg(cfg, "compression.cache_friendly", True), True):
         return 0
-    return max(0, as_int(get_cfg(cfg, "compression.cache_prefix_messages", 65), 65))
+    return max(0, as_int(get_cfg(cfg, "compression.cache_prefix_messages", 24), 24))
 
 
 def dedupe_old(messages: list[dict], cfg: Any, stats: CleanStats) -> None:
@@ -632,7 +632,7 @@ def compress_old(messages: list[dict], cfg: Any, stats: CleanStats, before_chars
     keep_turns = max(1, as_int(get_cfg(cfg, "keep_recent_turns", 24), 24))
     cutoff = max(0, len(messages) - keep_turns * 2)
     cache_friendly = as_bool(get_cfg(cfg, "compression.cache_friendly", True), True)
-    cache_prefix = max(0, as_int(get_cfg(cfg, "compression.cache_prefix_messages", 65), 65))
+    cache_prefix = max(0, as_int(get_cfg(cfg, "compression.cache_prefix_messages", 24), 24))
     start = cache_prefix if cache_friendly else 0
     for i, message in enumerate(messages):
         if i < start or i >= cutoff or not isinstance(message, dict):

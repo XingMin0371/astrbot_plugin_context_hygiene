@@ -53,6 +53,12 @@
     "type": "object",
     "hint": "只作用于私聊；群聊仍由 AstrBot 的群聊窗口控制。",
     "items": {
+      "enabled": {
+        "description": "启用私聊上下文窗口",
+        "type": "bool",
+        "default": false,
+        "hint": "默认关闭；关闭后完全不影响私聊请求。"
+      },
       "max_messages": {
         "description": "私聊上下文窗口条数",
         "type": "int",
@@ -70,6 +76,12 @@
         "type": "int",
         "default": 10,
         "hint": "连续无消息达到该分钟数后，下一次请求才处理私聊窗口。默认 10 分钟。"
+      },
+      "summary_budget_chars": {
+        "description": "摘要预算字符数",
+        "type": "int",
+        "default": 1200,
+        "hint": "历史摘要最多保留多少字符；默认 1200，允许 900–1200。"
       }
     }
   },

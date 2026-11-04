@@ -76,7 +76,7 @@ except ImportError:  # local/single-file import fallback
     from tool_policy import clean_tool_definitions, gate_official_tools  # type: ignore[no-redef]
 
 PLUGIN_NAME = "astrbot_plugin_context_hygiene"
-VERSION = "1.3.2"
+VERSION = "1.3.3"
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
 IMAGE_ARTIFACT_DIR_NAME = "image_artifacts"
 
@@ -863,7 +863,7 @@ class ContextHygiene(Star):
             score -= 120
         return score
 
-    def _summarize_dropped(self, dropped: list[dict], previous: str = "") -> str:
+    def _summarize_dropped(self, dropped: list[dict], previous: str = "", budget: int = 1200) -> str:
         candidates: list[tuple[int, str]] = []
         if previous:
             body = previous.replace("【历史摘要】", "").replace("【历史摘要结束】", "").strip()
@@ -891,9 +891,9 @@ class ContextHygiene(Star):
         chosen = []
         used = 0
         for idx, sentence in sorted(unique, key=lambda item: self._summary_score(item[1]), reverse=True):
-            if used >= 1200:
+            if used >= budget:
                 break
-            piece = sentence[:1200 - used]
+            piece = sentence[:budget - used]
             if piece:
                 chosen.append((idx, piece))
                 used += len(piece)
@@ -905,6 +905,8 @@ class ContextHygiene(Star):
     def _trim_private_window(self, umo: str, contexts: list[dict], idle_due: bool) -> list[dict]:
         """Above the limit, after idle: replace middle with one protected summary block."""
         if "GroupMessage" in umo:
+            return contexts
+        if not as_bool(self._cfg("private_window.enabled", False), False):
             return contexts
         limit = max(10, as_int(self._cfg("private_window.max_messages", self._cfg("private_max_messages", 90)), 90))
         if len(contexts) <= limit or not idle_due:
@@ -932,7 +934,8 @@ class ContextHygiene(Star):
         cut = min(cut, recent_start)
         if cut <= prefix_end:
             return contexts
-        summary = self._summarize_dropped(contexts[prefix_end:cut], previous)
+        summary_budget = max(900, min(1200, as_int(self._cfg("private_window.summary_budget_chars", 1200), 1200)))
+        summary = self._summarize_dropped(contexts[prefix_end:cut], previous, summary_budget)
         middle = [{"role": "user", "content": summary}] if summary else []
         trimmed = contexts[:prefix_n] + middle + contexts[cut:]
         logger.info(
