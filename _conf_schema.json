@@ -102,10 +102,10 @@
             "default": 120
           },
           "max_turn_new_tokens": {
-            "description": "单轮新增Token上限",
+            "description": "一条用户消息完整轮次新增 Token 上限",
             "type": "int",
             "default": 9000,
-            "hint": "只算本轮新增，不把缓存命中的历史算进去；0=不限。"
+            "hint": "只估算本轮新增，不含缓存命中的历史；包含本轮所有模型与工具步骤，不是单次工具调用。0=不限。"
           }
         }
       },
@@ -129,10 +129,10 @@
             "default": 240
           },
           "max_turn_new_tokens": {
-            "description": "单轮新增Token上限",
+            "description": "一条用户消息完整轮次新增 Token 上限",
             "type": "int",
             "default": 15000,
-            "hint": "只算本轮新增；0=不限。"
+            "hint": "只估算本轮新增，不含缓存命中的历史；包含本轮所有模型与工具步骤，不是单次工具调用。0=不限。"
           }
         }
       }
@@ -210,8 +210,8 @@
         "default": false
       },
       "max_current_result_chars": {
-        "description": "当前轮工具结果硬上限",
-        "hint": "只截断当前轮工具结果，默认 12000；旧结果之后按“工具结果最大字符数”再压缩。",
+        "description": "当前用户轮单条工具结果硬上限",
+        "hint": "只截断当前用户轮内每一条工具结果，单条上限，不是本轮合计；旧结果之后按“工具结果最大字符数”再压缩。",
         "type": "int",
         "default": 12000
       },
@@ -222,10 +222,10 @@
         "default": true
       },
       "max_result_chars": {
-        "description": "旧工具结果压缩上限",
+        "description": "历史旧工具结果单条压缩上限",
         "type": "int",
         "default": 6000,
-        "hint": "只处理已超过保留轮数的旧工具结果；默认 6000。当前轮由上一项限制。"
+        "hint": "只处理当前轮之外、超出最近保护范围的旧工具结果，按单条截断，不是合计预算；默认 6000。"
       },
       "ttl_minutes": {
         "description": "工具调用保留分钟数",
