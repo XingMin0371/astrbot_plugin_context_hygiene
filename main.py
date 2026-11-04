@@ -76,7 +76,7 @@ except ImportError:  # local/single-file import fallback
     from tool_policy import clean_tool_definitions, gate_official_tools  # type: ignore[no-redef]
 
 PLUGIN_NAME = "astrbot_plugin_context_hygiene"
-VERSION = "1.2.13"
+VERSION = "1.2.10"
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
 IMAGE_ARTIFACT_DIR_NAME = "image_artifacts"
 
@@ -97,8 +97,6 @@ class ContextHygiene(Star):
         self._last_admin_action: dict[str, float] = {}
         self._context_cache: dict[str, tuple[str, int, list[dict]]] = {}
         self._last_request_at: dict[str, float] = {}
-        self._cache_guard_started: dict[str, float] = {}
-        self._message_seen_at: dict[str, dict[str, float]] = {}
         self._last_artifact_cleanup = 0.0
         self._turn_guard_state: dict[str, dict] = {}
 
@@ -753,46 +751,6 @@ class ContextHygiene(Star):
             req.image_urls = kept_urls
             req.prompt = (req.prompt or "").rstrip() + "\n" + "\n".join(labels)
 
-    def _message_fingerprint(self, message: dict) -> str:
-        payload = json.dumps(
-            {
-                "role": message.get("role"),
-                "content": message.get("content"),
-                "tool_calls": message.get("tool_calls"),
-            },
-            ensure_ascii=False,
-            sort_keys=True,
-            default=str,
-        )
-        return hashlib.sha1(payload.encode("utf-8", "ignore")).hexdigest()
-
-    def _expired_prefix_end(self, umo: str, contexts: list[dict], now: float, guard_minutes: int) -> int:
-        """Return the first index whose message is still inside the protection window."""
-        guard = max(0, guard_minutes)
-        seen = self._message_seen_at.setdefault(umo, {})
-        cutoff = now - guard * 60
-        boundary = len(contexts)
-        for idx, message in enumerate(contexts):
-            if not isinstance(message, dict):
-                continue
-            key = self._message_fingerprint(message)
-            first = seen.setdefault(key, now)
-            if first >= cutoff:
-                boundary = idx
-                break
-        # Never cut through a tool pair: move back to the user message that starts it.
-        while boundary > 0 and boundary < len(contexts):
-            if contexts[boundary].get("role") == "user":
-                break
-            boundary -= 1
-        # Hard respect the existing cache protections: prefix and recent turns.
-        prefix = max(0, as_int(self._cfg("compression.cache_prefix_messages", 24), 24))
-        keep_turns = max(1, as_int(self._cfg("keep_recent_turns", 12), 12))
-        boundary = min(boundary, max(0, len(contexts) - keep_turns * 2))
-        if boundary <= prefix:
-            return 0
-        return boundary
-
     def _cache_guard_active(self, umo: str, now: float) -> bool:
         minutes = max(0, as_int(self._cfg("cache_guard_minutes", 75), 75))
         if minutes <= 0:
@@ -889,20 +847,10 @@ class ContextHygiene(Star):
             umo = str(getattr(event, "unified_msg_origin", "") or "")
             await self._caption_current_images(req)
             now = time.time()
-            guard_minutes = max(0, as_int(self._cfg("cache_guard_minutes", 75), 75))
-            idle_minutes = max(1, as_int(self._cfg("cache_idle_minutes", 5), 5))
-            previous = self._last_request_at.get(umo)
-            started = self._cache_guard_started.get(umo, now)
-            if umo not in self._cache_guard_started:
-                self._cache_guard_started[umo] = started
+            active = self._cache_guard_active(umo, now)
             self._last_request_at[umo] = now
             if len(self._last_request_at) > 32:
                 self._last_request_at.pop(next(iter(self._last_request_at)))
-            if len(self._cache_guard_started) > 32:
-                self._cache_guard_started.pop(next(iter(self._cache_guard_started)))
-            idle_due = bool(previous is not None and now - previous >= idle_minutes * 60)
-            guard_expired = guard_minutes <= 0 or now - started >= guard_minutes * 60
-            active = not (idle_due and guard_expired)
             self._apply_turn_guard(event, req, umo, now)
             contexts = getattr(req, "contexts", None)
             if not isinstance(contexts, list) or not contexts:
@@ -933,16 +881,9 @@ class ContextHygiene(Star):
                 )
             self._maybe_cleanup_backups()
             self._apply_tool_policy(event, req)
-            boundary = self._expired_prefix_end(umo, contexts, now, guard_minutes)
-            if boundary <= 0:
-                self._cache_guard_started[umo] = now
-                return
-            expired = contexts[:boundary]
-            keep = contexts[boundary:]
-            cleaned, stats = self._clean_contexts_cached(umo, expired)
-            self._cache_guard_started[umo] = now
+            cleaned, stats = self._clean_contexts_cached(umo, contexts)
             if stats.changed:
-                req.contexts = cleaned + keep
+                req.contexts = cleaned
                 logger.info(
                     "context_hygiene: request cleaned | chars %s -> %s | reminders %s | tool_msgs %s | images %s",
                     stats.before_chars,
