@@ -34,6 +34,12 @@
         "type": "int",
         "default": 75
       },
+      "private_max_messages": {
+        "description": "私聊上下文窗口条数",
+        "hint": "只限制私聊；保留前 24 条前缀和最近轮，超出部分从中间丢弃。默认 90 条。",
+        "type": "int",
+        "default": 90
+      },
       "auto_threshold": {
         "description": "自动按模型窗口计算压缩阈值",
         "type": "bool",

@@ -76,7 +76,7 @@ except ImportError:  # local/single-file import fallback
     from tool_policy import clean_tool_definitions, gate_official_tools  # type: ignore[no-redef]
 
 PLUGIN_NAME = "astrbot_plugin_context_hygiene"
-VERSION = "1.2.10"
+VERSION = "1.2.11"
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
 IMAGE_ARTIFACT_DIR_NAME = "image_artifacts"
 
@@ -838,6 +838,33 @@ class ContextHygiene(Star):
         chars = self._hard_input_chars(req, contexts)
         return chars >= thresholds["hard_chars"] or estimate_tokens(chars) >= thresholds["hard_tokens"]
 
+    def _trim_private_window(self, umo: str, contexts: list[dict]) -> list[dict]:
+        """Keep private chats within a window by dropping only the oldest middle part."""
+        if "GroupMessage" in umo:
+            return contexts
+        limit = max(10, as_int(self._cfg("private_max_messages", 90), 90))
+        if len(contexts) <= limit:
+            return contexts
+        prefix_n = max(0, as_int(self._cfg("compression.cache_prefix_messages", 24), 24))
+        keep_turns = max(1, as_int(self._cfg("keep_recent_turns", 12), 12))
+        recent_n = max(0, keep_turns * 2)
+        if prefix_n + recent_n >= limit:
+            return contexts
+        excess = len(contexts) - limit
+        cut = prefix_n + excess
+        middle_end = len(contexts) - recent_n
+        # Never cut through a tool pair: move forward to the next user message.
+        while cut < middle_end and contexts[cut].get("role") != "user":
+            cut += 1
+        if cut >= middle_end:
+            cut = middle_end
+        trimmed = contexts[:prefix_n] + contexts[cut:]
+        logger.info(
+            "context_hygiene: private window | %s -> %s msgs | dropped middle %s",
+            len(contexts), len(trimmed), cut - prefix_n,
+        )
+        return trimmed
+
     @filter.on_llm_request()
     async def filter_request(self, event: AstrMessageEvent, req: ProviderRequest) -> None:
         """Clean only the request copy.  The stored conversation is untouched."""
@@ -855,6 +882,8 @@ class ContextHygiene(Star):
             contexts = getattr(req, "contexts", None)
             if not isinstance(contexts, list) or not contexts:
                 return
+            contexts = self._trim_private_window(umo, contexts)
+            req.contexts = contexts
             try:
                 tools = getattr(req, "func_tool", None) or []
                 tool_chars = len(json.dumps(tools, ensure_ascii=False, default=str))
