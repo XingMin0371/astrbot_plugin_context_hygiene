@@ -613,12 +613,20 @@ def _compress_text(text: str, ratio: float) -> str:
 def compress_old(messages: list[dict], cfg: Any, stats: CleanStats, before_chars: int) -> None:
     if not as_bool(get_cfg(cfg, "compression.enabled", True), True):
         return
+    # 阈值只统计实际会被压缩的内容：user/assistant，且不含 tool_calls。
+    compressible_chars = sum(
+        message_chars(m)
+        for m in messages
+        if isinstance(m, dict)
+        and m.get("role") in {"user", "assistant"}
+        and not m.get("tool_calls")
+    )
     threshold_chars = max(500, as_int(get_cfg(cfg, "threshold_chars", 126500), 126500))
     threshold_tokens = max(500, as_int(get_cfg(cfg, "threshold_tokens", 75000), 75000))
-    if before_chars <= threshold_chars and estimate_tokens(before_chars) <= threshold_tokens:
+    if compressible_chars <= threshold_chars and estimate_tokens(compressible_chars) <= threshold_tokens:
         return
     min_chars = max(500, as_int(get_cfg(cfg, "compression.min_chars", 16000), 16000))
-    if before_chars < min_chars:
+    if compressible_chars < min_chars:
         return
     ratio = max(0.05, min(0.9, as_float(get_cfg(cfg, "compression.keep_ratio", 0.333), 0.333)))
     keep_turns = max(1, as_int(get_cfg(cfg, "keep_recent_turns", 24), 24))

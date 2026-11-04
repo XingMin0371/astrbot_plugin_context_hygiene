@@ -76,7 +76,7 @@ except ImportError:  # local/single-file import fallback
     from tool_policy import clean_tool_definitions, gate_official_tools  # type: ignore[no-redef]
 
 PLUGIN_NAME = "astrbot_plugin_context_hygiene"
-VERSION = "1.2.8"
+VERSION = "1.2.9"
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
 IMAGE_ARTIFACT_DIR_NAME = "image_artifacts"
 
@@ -856,6 +856,21 @@ class ContextHygiene(Star):
             contexts = getattr(req, "contexts", None)
             if not isinstance(contexts, list) or not contexts:
                 return
+            try:
+                tools = getattr(req, "func_tool", None) or []
+                tool_chars = len(json.dumps(tools, ensure_ascii=False, default=str))
+                extra = getattr(req, "extra_user_content_parts", None) or []
+                logger.info(
+                    "context_hygiene: request composition | system=%s contexts=%s prompt=%s extra=%s tools=%s tool_count=%s",
+                    len(str(getattr(req, "system_prompt", "") or "")),
+                    sum(message_chars(m) for m in contexts),
+                    len(str(getattr(req, "prompt", "") or "")),
+                    len(json.dumps(extra, ensure_ascii=False, default=str)),
+                    tool_chars,
+                    len(tools) if isinstance(tools, list) else 0,
+                )
+            except Exception:
+                pass
             hard_hit = self._hard_limit_hit(req, contexts)
             if active and not hard_hit:
                 # Do not rewrite a warm prompt-cache prefix during an active
