@@ -784,7 +784,7 @@ def clean_history(messages: Any, cfg: Any) -> tuple[list[dict], CleanStats]:
     )
     clean_reminders(working, cfg, stats)
     dedupe_old(working, cfg, stats)
-    if not as_bool(get_cfg(cfg, "tools.skip_cleanup", False), False):
+    if as_bool(get_cfg(cfg, "tools.cleanup_tools", False), False):
         clean_tools(working, cfg, stats)
     clean_images(working, cfg, stats)
     cap_current_tool_results(working, cfg, stats)

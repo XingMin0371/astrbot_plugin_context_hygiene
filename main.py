@@ -76,7 +76,7 @@ except ImportError:  # local/single-file import fallback
     from tool_policy import clean_tool_definitions, gate_official_tools  # type: ignore[no-redef]
 
 PLUGIN_NAME = "astrbot_plugin_context_hygiene"
-VERSION = "1.2.6"
+VERSION = "1.2.7"
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
 IMAGE_ARTIFACT_DIR_NAME = "image_artifacts"
 
@@ -444,7 +444,7 @@ class ContextHygiene(Star):
                     tools = {}
                 cfg["tools"] = tools
                 if as_bool(other.get("inject", {}).get("tool_context_compress", True), True):
-                    tools["skip_cleanup"] = True
+                    tools["cleanup_tools"] = False
         except Exception:
             pass
         return cfg
