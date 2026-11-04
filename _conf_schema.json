@@ -89,12 +89,12 @@
           "max_steps": {
             "description": "最多模型步数",
             "type": "int",
-            "default": 15
+            "default": 6
           },
           "max_tool_calls": {
             "description": "最多工具调用次数",
             "type": "int",
-            "default": 5
+            "default": 4
           },
           "max_turn_seconds": {
             "description": "单轮最长秒数",
@@ -104,7 +104,7 @@
           "max_turn_new_tokens": {
             "description": "一条用户消息完整轮次新增 Token 上限",
             "type": "int",
-            "default": 6000,
+            "default": 5000,
             "hint": "只估算本轮新增，不含缓存命中的历史；包含本轮所有模型与工具步骤，不是单次工具调用。0=不限。"
           }
         }
@@ -116,12 +116,12 @@
           "max_steps": {
             "description": "最多模型步数",
             "type": "int",
-            "default": 24
+            "default": 9
           },
           "max_tool_calls": {
             "description": "最多工具调用次数",
             "type": "int",
-            "default": 8
+            "default": 7
           },
           "max_turn_seconds": {
             "description": "单轮最长秒数",
@@ -131,7 +131,7 @@
           "max_turn_new_tokens": {
             "description": "一条用户消息完整轮次新增 Token 上限",
             "type": "int",
-            "default": 13200,
+            "default": 12000,
             "hint": "只估算本轮新增，不含缓存命中的历史；包含本轮所有模型与工具步骤，不是单次工具调用。0=不限。"
           }
         }
