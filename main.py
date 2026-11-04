@@ -76,7 +76,7 @@ except ImportError:  # local/single-file import fallback
     from tool_policy import clean_tool_definitions, gate_official_tools  # type: ignore[no-redef]
 
 PLUGIN_NAME = "astrbot_plugin_context_hygiene"
-VERSION = "1.2.12"
+VERSION = "1.2.13"
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
 IMAGE_ARTIFACT_DIR_NAME = "image_artifacts"
 
@@ -785,7 +785,13 @@ class ContextHygiene(Star):
             if contexts[boundary].get("role") == "user":
                 break
             boundary -= 1
-        return max(0, boundary)
+        # Hard respect the existing cache protections: prefix and recent turns.
+        prefix = max(0, as_int(self._cfg("compression.cache_prefix_messages", 24), 24))
+        keep_turns = max(1, as_int(self._cfg("keep_recent_turns", 12), 12))
+        boundary = min(boundary, max(0, len(contexts) - keep_turns * 2))
+        if boundary <= prefix:
+            return 0
+        return boundary
 
     def _cache_guard_active(self, umo: str, now: float) -> bool:
         minutes = max(0, as_int(self._cfg("cache_guard_minutes", 75), 75))
