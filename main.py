@@ -76,7 +76,7 @@ except ImportError:  # local/single-file import fallback
     from tool_policy import clean_tool_definitions, gate_official_tools  # type: ignore[no-redef]
 
 PLUGIN_NAME = "astrbot_plugin_context_hygiene"
-VERSION = "1.3.3"
+VERSION = "1.3.4"
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
 IMAGE_ARTIFACT_DIR_NAME = "image_artifacts"
 
@@ -913,9 +913,11 @@ class ContextHygiene(Star):
             return contexts
         target = max(20, as_int(self._cfg("private_window.trim_target", self._cfg("private_trim_target", 72)), 72))
         prefix_n = max(0, as_int(self._cfg("compression.cache_prefix_messages", 24), 24))
-        keep_turns = max(1, as_int(self._cfg("keep_recent_turns", 12), 12))
+        keep_turns = max(1, as_int(self._cfg("basic.keep_recent_turns", self._cfg("keep_recent_turns", 12)), 12))
         recent_n = max(0, keep_turns * 2)
-        if prefix_n + recent_n + 1 >= target:
+        # The target must leave room for prefix + summary + at least one recent pair.
+        recent_n = min(recent_n, max(0, target - prefix_n - 1))
+        if recent_n <= 0:
             return contexts
         previous = ""
         prefix_end = prefix_n

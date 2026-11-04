@@ -77,7 +77,7 @@ DEFAULTS: dict[str, Any] = {
     "enabled": True,
     "threshold_chars": 116364,
     "threshold_tokens": 64000,
-    "keep_recent_turns": 24,
+    "keep_recent_turns": 12,
     "reminder.dedupe": True,
     "reminder.keep_latest": True,
     "tools.ttl_minutes": 65,
@@ -273,7 +273,7 @@ def clean_reminders(messages: list[dict], cfg: Any, stats: CleanStats) -> None:
 
 
 def _old_cutoff(messages: list[dict], cfg: Any) -> int:
-    keep_turns = max(0, as_int(get_cfg(cfg, "keep_recent_turns", 24), 24))
+    keep_turns = max(0, as_int(get_cfg(cfg, "basic.keep_recent_turns", get_cfg(cfg, "keep_recent_turns", 12)), 12))
     return max(0, len(messages) - keep_turns * 2)
 
 
@@ -439,7 +439,7 @@ def clean_tools(messages: list[dict], cfg: Any, stats: CleanStats) -> None:
     remove_orphan = as_bool(get_cfg(cfg, "tools.remove_orphan", True), True)
     summarize = as_bool(get_cfg(cfg, "tools.summarize_long", True), True)
     max_result_chars = max(200, as_int(get_cfg(cfg, "tools.max_result_chars", 6000), 6000))
-    keep_turns = max(0, as_int(get_cfg(cfg, "keep_recent_turns", 24), 24))
+    keep_turns = max(0, as_int(get_cfg(cfg, "basic.keep_recent_turns", get_cfg(cfg, "keep_recent_turns", 12)), 12))
     # Only clean tool traffic older than this many turns; keep recent turns
     # byte-stable so the prompt cache prefix is not disturbed.
     tool_keep_turns = max(1, as_int(get_cfg(cfg, "tools.keep_recent_turns", 30), 30))
@@ -549,7 +549,7 @@ def _image_has_inline_base64(part: dict) -> bool:
 def clean_images(messages: list[dict], cfg: Any, stats: CleanStats) -> None:
     if not as_bool(get_cfg(cfg, "images.clean_old", True), True):
         return
-    keep_turns = max(0, as_int(get_cfg(cfg, "keep_recent_turns", 24), 24))
+    keep_turns = max(0, as_int(get_cfg(cfg, "basic.keep_recent_turns", get_cfg(cfg, "keep_recent_turns", 12)), 12))
     cutoff = max(0, len(messages) - keep_turns * 2)
     start = _cache_start(cfg)
     placeholder = str(get_cfg(cfg, "images.placeholder", "[图片已省略]"))
@@ -629,7 +629,7 @@ def compress_old(messages: list[dict], cfg: Any, stats: CleanStats, before_chars
     if compressible_chars < min_chars:
         return
     ratio = max(0.05, min(0.9, as_float(get_cfg(cfg, "compression.keep_ratio", 0.333), 0.333)))
-    keep_turns = max(1, as_int(get_cfg(cfg, "keep_recent_turns", 24), 24))
+    keep_turns = max(1, as_int(get_cfg(cfg, "basic.keep_recent_turns", get_cfg(cfg, "keep_recent_turns", 12)), 12))
     cutoff = max(0, len(messages) - keep_turns * 2)
     cache_friendly = as_bool(get_cfg(cfg, "compression.cache_friendly", True), True)
     cache_prefix = max(0, as_int(get_cfg(cfg, "compression.cache_prefix_messages", 24), 24))
