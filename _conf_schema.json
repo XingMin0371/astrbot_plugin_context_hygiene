@@ -24,9 +24,9 @@
       },
       "keep_recent_turns": {
         "description": "保留最近轮数",
-        "hint": "压缩时保留最近多少轮对话；默认 24。",
+        "hint": "按上下文窗口推荐：24条→4轮，48条→8轮，72条→12轮（默认），90条→15轮，120条→20轮；超过120条按窗口÷6轮。",
         "type": "int",
-        "default": 24
+        "default": 12
       },
       "cache_guard_minutes": {
         "description": "活跃缓存保护（分钟）",
@@ -180,9 +180,9 @@
       },
       "cache_prefix_messages": {
         "description": "保留前缀消息数",
-        "hint": "cache_friendly 模式下前 N 条消息保持原样；默认 65。",
+        "hint": "按上下文窗口推荐：24条→8条，48条→16条，72条→24条（默认），90条→30条，120条→40条；超过120条按窗口÷3条。",
         "type": "int",
-        "default": 65
+        "default": 24
       },
       "hard_threshold_ratio": {
         "description": "兜底压缩阈值比例",
