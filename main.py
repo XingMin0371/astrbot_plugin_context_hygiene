@@ -76,7 +76,7 @@ except ImportError:  # local/single-file import fallback
     from tool_policy import clean_tool_definitions, gate_official_tools  # type: ignore[no-redef]
 
 PLUGIN_NAME = "astrbot_plugin_context_hygiene"
-VERSION = "1.2.7"
+VERSION = "1.2.8"
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
 IMAGE_ARTIFACT_DIR_NAME = "image_artifacts"
 
@@ -434,19 +434,6 @@ class ContextHygiene(Star):
             cfg["compression"] = compression
         compression["hard_threshold_chars"] = thresholds["hard_chars"]
         compression["hard_threshold_tokens"] = thresholds["hard_tokens"]
-        try:
-            from astrbot.core.utils.astrbot_path import get_astrbot_data_path
-            path = Path(get_astrbot_data_path()) / "config" / "memory5_config.json"
-            if path.exists():
-                other = json.loads(path.read_text(encoding="utf-8-sig"))
-                tools = cfg.get("tools")
-                if not isinstance(tools, dict):
-                    tools = {}
-                cfg["tools"] = tools
-                if as_bool(other.get("inject", {}).get("tool_context_compress", True), True):
-                    tools["cleanup_tools"] = False
-        except Exception:
-            pass
         return cfg
 
     def _clean_contexts_cached(
