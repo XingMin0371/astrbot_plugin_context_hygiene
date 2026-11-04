@@ -29,10 +29,16 @@
         "default": 12
       },
       "cache_guard_minutes": {
-        "description": "活跃缓存保护（分钟）",
-        "hint": "按窗口推荐：24条→45分钟；48条→60分钟；72条→75分钟；90条→90分钟；极限→120分钟。",
+        "description": "缓存保护期（分钟）",
+        "hint": "从本次会话首次请求开始计时，保护期过后即使继续聊天也不再续期。",
         "type": "int",
         "default": 75
+      },
+      "cache_idle_minutes": {
+        "description": "空闲多久后清理（分钟）",
+        "hint": "连续无消息/工具调用达到该分钟数，且缓存保护期已过，才执行清理。默认 5。",
+        "type": "int",
+        "default": 5
       },
       "auto_threshold": {
         "description": "自动按模型窗口计算压缩阈值",

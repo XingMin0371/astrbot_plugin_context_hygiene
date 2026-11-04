@@ -76,7 +76,7 @@ except ImportError:  # local/single-file import fallback
     from tool_policy import clean_tool_definitions, gate_official_tools  # type: ignore[no-redef]
 
 PLUGIN_NAME = "astrbot_plugin_context_hygiene"
-VERSION = "1.2.10"
+VERSION = "1.2.11"
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
 IMAGE_ARTIFACT_DIR_NAME = "image_artifacts"
 
@@ -97,6 +97,7 @@ class ContextHygiene(Star):
         self._last_admin_action: dict[str, float] = {}
         self._context_cache: dict[str, tuple[str, int, list[dict]]] = {}
         self._last_request_at: dict[str, float] = {}
+        self._cache_guard_started: dict[str, float] = {}
         self._last_artifact_cleanup = 0.0
         self._turn_guard_state: dict[str, dict] = {}
 
@@ -847,10 +848,20 @@ class ContextHygiene(Star):
             umo = str(getattr(event, "unified_msg_origin", "") or "")
             await self._caption_current_images(req)
             now = time.time()
-            active = self._cache_guard_active(umo, now)
+            guard_minutes = max(0, as_int(self._cfg("cache_guard_minutes", 75), 75))
+            idle_minutes = max(1, as_int(self._cfg("cache_idle_minutes", 5), 5))
+            previous = self._last_request_at.get(umo)
+            started = self._cache_guard_started.get(umo, now)
+            if umo not in self._cache_guard_started:
+                self._cache_guard_started[umo] = started
             self._last_request_at[umo] = now
             if len(self._last_request_at) > 32:
                 self._last_request_at.pop(next(iter(self._last_request_at)))
+            if len(self._cache_guard_started) > 32:
+                self._cache_guard_started.pop(next(iter(self._cache_guard_started)))
+            idle_due = bool(previous is not None and now - previous >= idle_minutes * 60)
+            guard_expired = guard_minutes <= 0 or now - started >= guard_minutes * 60
+            active = not (idle_due and guard_expired)
             self._apply_turn_guard(event, req, umo, now)
             contexts = getattr(req, "contexts", None)
             if not isinstance(contexts, list) or not contexts:
@@ -882,6 +893,7 @@ class ContextHygiene(Star):
             self._maybe_cleanup_backups()
             self._apply_tool_policy(event, req)
             cleaned, stats = self._clean_contexts_cached(umo, contexts)
+            self._cache_guard_started[umo] = now
             if stats.changed:
                 req.contexts = cleaned
                 logger.info(
