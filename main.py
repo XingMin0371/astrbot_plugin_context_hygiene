@@ -76,7 +76,7 @@ except ImportError:  # local/single-file import fallback
     from tool_policy import clean_tool_definitions, gate_official_tools  # type: ignore[no-redef]
 
 PLUGIN_NAME = "astrbot_plugin_context_hygiene"
-VERSION = "1.2.9"
+VERSION = "1.2.10"
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
 IMAGE_ARTIFACT_DIR_NAME = "image_artifacts"
 
@@ -818,15 +818,14 @@ class ContextHygiene(Star):
         return 0
 
     def _hard_input_chars(self, req: ProviderRequest, contexts: list[dict]) -> int:
-        """Compressible history + tool schemas + current prompt; no system/persona."""
-        chars = sum(message_chars(m) for m in contexts)
-        try:
-            toolset = getattr(req, "func_tool", None)
-            tools = getattr(toolset, "tools", None)
-            if isinstance(tools, list):
-                chars += len(json.dumps(tools, ensure_ascii=False, default=str))
-        except Exception:
-            pass
+        """Only content that compression can actually shrink: user/assistant text."""
+        chars = sum(
+            message_chars(m)
+            for m in contexts
+            if isinstance(m, dict)
+            and m.get("role") in {"user", "assistant"}
+            and not m.get("tool_calls")
+        )
         chars += self._text_only_chars(getattr(req, "prompt", None))
         chars += self._text_only_chars(getattr(req, "extra_user_content_parts", None))
         return chars
