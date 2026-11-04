@@ -30,7 +30,7 @@
       },
       "cache_guard_minutes": {
         "description": "活跃缓存保护（分钟）",
-        "hint": "按窗口推荐：24条→45分钟；48条→60分钟；72条→75分钟；90条→90分钟；极限→105分钟。",
+        "hint": "按窗口推荐：24条→45分钟；48条→60分钟；72条→75分钟；90条→90分钟；极限→120分钟。",
         "type": "int",
         "default": 75
       },
@@ -38,7 +38,7 @@
         "description": "自动按模型窗口计算压缩阈值",
         "type": "bool",
         "default": false,
-        "hint": "默认关闭；关闭时使用固定阈值 threshold_tokens/threshold_chars。"
+        "hint": "默认关闭；关闭时使用固定的“压缩触发估算 Token”和“压缩触发字符数”。"
       },
       "threshold_ratio": {
         "description": "普通压缩阈值比例",
