@@ -76,7 +76,7 @@ except ImportError:  # local/single-file import fallback
     from tool_policy import clean_tool_definitions, gate_official_tools  # type: ignore[no-redef]
 
 PLUGIN_NAME = "astrbot_plugin_context_hygiene"
-VERSION = "1.3.0"
+VERSION = "1.3.2"
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
 IMAGE_ARTIFACT_DIR_NAME = "image_artifacts"
 
@@ -838,65 +838,103 @@ class ContextHygiene(Star):
         chars = self._hard_input_chars(req, contexts)
         return chars >= thresholds["hard_chars"] or estimate_tokens(chars) >= thresholds["hard_tokens"]
 
-    def _summarize_dropped(self, dropped: list[dict]) -> str:
-        texts = []
+    def _is_summary_message(self, message: Any) -> bool:
+        return (
+            isinstance(message, dict)
+            and message.get("role") == "user"
+            and str(message.get("content", "")).startswith("【历史摘要】")
+        )
+
+    def _summary_sentences(self, text: str) -> list[str]:
+        return [s.strip() for s in re.split(r"(?<=[。！？!?；;])|\n+", text) if s.strip()]
+
+    def _summary_score(self, sentence: str) -> int:
+        score = min(len(sentence), 120) // 2
+        score += sum(1 for ch in sentence if ch.isdigit()) * 8
+        for keyword, bonus in (
+            ("我叫", 40), ("叫我", 40), ("名字", 30), ("称呼", 30),
+            ("喜欢", 30), ("讨厌", 30), ("偏好", 30), ("习惯", 25),
+            ("答应", 35), ("以后", 25), ("约定", 35), ("承诺", 35),
+            ("所以", 20), ("结论", 30), ("决定", 30), ("记住", 30),
+        ):
+            if keyword in sentence:
+                score += bonus
+        if re.match(r"^\[?(?:\d{4}[-/]\d{1,2}|CronJob|triggered at|https?://)", sentence, re.I):
+            score -= 120
+        return score
+
+    def _summarize_dropped(self, dropped: list[dict], previous: str = "") -> str:
+        candidates: list[tuple[int, str]] = []
+        if previous:
+            body = previous.replace("【历史摘要】", "").replace("【历史摘要结束】", "").strip()
+            candidates.extend((i, s) for i, s in enumerate(self._summary_sentences(body)))
+        next_idx = len(candidates)
         for message in dropped:
             if not isinstance(message, dict):
                 continue
+            if message.get("role") not in {"user", "assistant"} or message.get("tool_calls"):
+                continue
             text = self._guard_message_text(message.get("content"))
-            if text:
-                texts.append(text)
-        raw = "\n".join(texts)
-        if not raw:
+            for sentence in self._summary_sentences(text):
+                candidates.append((next_idx, sentence))
+                next_idx += 1
+        if not candidates:
             return ""
-        sentences = [s.strip() for s in re.split(r"(?<=[。！？!?；;])|\n+", raw) if s.strip()]
-        if not sentences:
-            return ""
-        budget = 1200
-        chosen, used = [], 0
-        for sentence in sentences:
-            if used >= budget:
+        seen = set()
+        unique = []
+        for idx, sentence in candidates:
+            key = re.sub(r"\s+", "", sentence)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append((idx, sentence))
+        chosen = []
+        used = 0
+        for idx, sentence in sorted(unique, key=lambda item: self._summary_score(item[1]), reverse=True):
+            if used >= 1200:
                 break
-            remaining = budget - used
-            piece = sentence[:remaining]
+            piece = sentence[:1200 - used]
             if piece:
-                chosen.append(piece)
+                chosen.append((idx, piece))
                 used += len(piece)
+        chosen.sort()
         if not chosen:
             return ""
-        return "【历史摘要】\n" + " ".join(chosen) + "\n【历史摘要结束】"
+        return "【历史摘要】\n" + " ".join(s for _idx, s in chosen) + "\n【历史摘要结束】"
 
     def _trim_private_window(self, umo: str, contexts: list[dict], idle_due: bool) -> list[dict]:
-        """Above the limit, after idle: summarize and compress toward the target."""
+        """Above the limit, after idle: replace middle with one protected summary block."""
         if "GroupMessage" in umo:
             return contexts
-        limit = max(10, as_int(self._cfg("private_max_messages", 90), 90))
+        limit = max(10, as_int(self._cfg("private_window.max_messages", self._cfg("private_max_messages", 90)), 90))
         if len(contexts) <= limit or not idle_due:
             return contexts
-        target = max(20, as_int(self._cfg("private_trim_target", 72), 72))
+        target = max(20, as_int(self._cfg("private_window.trim_target", self._cfg("private_trim_target", 72)), 72))
         prefix_n = max(0, as_int(self._cfg("compression.cache_prefix_messages", 24), 24))
         keep_turns = max(1, as_int(self._cfg("keep_recent_turns", 12), 12))
         recent_n = max(0, keep_turns * 2)
         if prefix_n + recent_n + 1 >= target:
             return contexts
+        previous = ""
         prefix_end = prefix_n
-        while prefix_end < len(contexts) and contexts[prefix_end].get("role") != "user":
-            prefix_end += 1
+        if prefix_n < len(contexts) and self._is_summary_message(contexts[prefix_n]):
+            previous = str(contexts[prefix_n].get("content", ""))
+            prefix_end = prefix_n + 1
         recent_start = max(prefix_end, len(contexts) - recent_n)
         while recent_start > prefix_end and contexts[recent_start].get("role") != "user":
             recent_start -= 1
         if recent_start <= prefix_end or len(contexts) <= target:
             return contexts
-        excess = max(1, len(contexts) - target + 1)
-        cut = prefix_end + excess
+        drop_count = max(1, len(contexts) - target + (0 if previous else 1))
+        cut = prefix_end + drop_count
         while cut < recent_start and contexts[cut].get("role") != "user":
             cut += 1
         cut = min(cut, recent_start)
         if cut <= prefix_end:
             return contexts
-        summary = self._summarize_dropped(contexts[prefix_end:cut])
+        summary = self._summarize_dropped(contexts[prefix_end:cut], previous)
         middle = [{"role": "user", "content": summary}] if summary else []
-        trimmed = contexts[:prefix_end] + middle + contexts[cut:]
+        trimmed = contexts[:prefix_n] + middle + contexts[cut:]
         logger.info(
             "context_hygiene: private window | %s -> %s msgs | summarized middle %s",
             len(contexts), len(trimmed), cut - prefix_end,
@@ -913,7 +951,7 @@ class ContextHygiene(Star):
             await self._caption_current_images(req)
             now = time.time()
             previous_at = self._last_request_at.get(umo)
-            idle_minutes = max(1, as_int(self._cfg("private_idle_minutes", 10), 10))
+            idle_minutes = max(1, as_int(self._cfg("private_window.idle_minutes", self._cfg("private_idle_minutes", 10)), 10))
             idle_due = bool(previous_at and now - previous_at >= idle_minutes * 60)
             active = self._cache_guard_active(umo, now)
             self._last_request_at[umo] = now

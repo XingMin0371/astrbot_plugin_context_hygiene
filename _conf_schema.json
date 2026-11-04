@@ -34,24 +34,6 @@
         "type": "int",
         "default": 75
       },
-      "private_max_messages": {
-        "description": "私聊上下文窗口条数",
-        "hint": "只限制私聊；超过该条数且空闲达到设定分钟后处理。默认 90 条。",
-        "type": "int",
-        "default": 90
-      },
-      "private_trim_target": {
-        "description": "私聊压缩目标条数",
-        "hint": "超过窗口后压到该条数；中间旧消息生成摘要。默认 72 条。",
-        "type": "int",
-        "default": 72
-      },
-      "private_idle_minutes": {
-        "description": "私聊空闲处理分钟数",
-        "hint": "连续无消息达到该分钟数后，下一次请求才处理私聊窗口。默认 10 分钟。",
-        "type": "int",
-        "default": 10
-      },
       "auto_threshold": {
         "description": "自动按模型窗口计算压缩阈值",
         "type": "bool",
@@ -63,6 +45,31 @@
         "type": "float",
         "default": 0.536,
         "hint": "自动阈值默认关闭；仅在开启自动模式时生效。"
+      }
+    }
+  },
+  "private_window": {
+    "description": "私聊上下文窗口",
+    "type": "object",
+    "hint": "只作用于私聊；群聊仍由 AstrBot 的群聊窗口控制。",
+    "items": {
+      "max_messages": {
+        "description": "私聊上下文窗口条数",
+        "type": "int",
+        "default": 90,
+        "hint": "超过该条数且空闲达到设定分钟后处理。默认 90 条。"
+      },
+      "trim_target": {
+        "description": "私聊压缩目标条数",
+        "type": "int",
+        "default": 72,
+        "hint": "超过窗口后压到该条数；中间旧消息生成摘要。默认 72 条。"
+      },
+      "idle_minutes": {
+        "description": "私聊空闲处理分钟数",
+        "type": "int",
+        "default": 10,
+        "hint": "连续无消息达到该分钟数后，下一次请求才处理私聊窗口。默认 10 分钟。"
       }
     }
   },
@@ -198,7 +205,7 @@
       },
       "cache_prefix_messages": {
         "description": "保留前缀消息数",
-        "hint": "计算：上下文窗口条数 ÷ 3。推荐 8/16/24/30/极限；极限 50 条。",
+        "hint": "缓存友好模式下保护的前缀消息数；默认 24。",
         "type": "int",
         "default": 24
       },
