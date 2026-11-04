@@ -99,7 +99,7 @@
           "max_turn_seconds": {
             "description": "单轮最长秒数",
             "type": "int",
-            "default": 120
+            "default": 180
           },
           "max_turn_new_tokens": {
             "description": "一条用户消息完整轮次新增 Token 上限",
@@ -126,7 +126,7 @@
           "max_turn_seconds": {
             "description": "单轮最长秒数",
             "type": "int",
-            "default": 240
+            "default": 300
           },
           "max_turn_new_tokens": {
             "description": "一条用户消息完整轮次新增 Token 上限",
