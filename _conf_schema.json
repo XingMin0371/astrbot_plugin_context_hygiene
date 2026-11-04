@@ -36,9 +36,21 @@
       },
       "private_max_messages": {
         "description": "私聊上下文窗口条数",
-        "hint": "只限制私聊；保留前 24 条前缀和最近轮，超出部分从中间丢弃。默认 90 条。",
+        "hint": "只限制私聊；超过该条数且空闲达到设定分钟后处理。默认 90 条。",
         "type": "int",
         "default": 90
+      },
+      "private_trim_target": {
+        "description": "私聊压缩目标条数",
+        "hint": "超过窗口后压到该条数；中间旧消息生成摘要。默认 72 条。",
+        "type": "int",
+        "default": 72
+      },
+      "private_idle_minutes": {
+        "description": "私聊空闲处理分钟数",
+        "hint": "连续无消息达到该分钟数后，下一次请求才处理私聊窗口。默认 10 分钟。",
+        "type": "int",
+        "default": 10
       },
       "auto_threshold": {
         "description": "自动按模型窗口计算压缩阈值",

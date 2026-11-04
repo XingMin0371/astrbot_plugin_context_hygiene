@@ -76,7 +76,7 @@ except ImportError:  # local/single-file import fallback
     from tool_policy import clean_tool_definitions, gate_official_tools  # type: ignore[no-redef]
 
 PLUGIN_NAME = "astrbot_plugin_context_hygiene"
-VERSION = "1.2.11"
+VERSION = "1.3.0"
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
 IMAGE_ARTIFACT_DIR_NAME = "image_artifacts"
 
@@ -838,30 +838,68 @@ class ContextHygiene(Star):
         chars = self._hard_input_chars(req, contexts)
         return chars >= thresholds["hard_chars"] or estimate_tokens(chars) >= thresholds["hard_tokens"]
 
-    def _trim_private_window(self, umo: str, contexts: list[dict]) -> list[dict]:
-        """Keep private chats within a window by dropping only the oldest middle part."""
+    def _summarize_dropped(self, dropped: list[dict]) -> str:
+        texts = []
+        for message in dropped:
+            if not isinstance(message, dict):
+                continue
+            text = self._guard_message_text(message.get("content"))
+            if text:
+                texts.append(text)
+        raw = "\n".join(texts)
+        if not raw:
+            return ""
+        sentences = [s.strip() for s in re.split(r"(?<=[。！？!?；;])|\n+", raw) if s.strip()]
+        if not sentences:
+            return ""
+        budget = 1200
+        chosen, used = [], 0
+        for sentence in sentences:
+            if used >= budget:
+                break
+            remaining = budget - used
+            piece = sentence[:remaining]
+            if piece:
+                chosen.append(piece)
+                used += len(piece)
+        if not chosen:
+            return ""
+        return "【历史摘要】\n" + " ".join(chosen) + "\n【历史摘要结束】"
+
+    def _trim_private_window(self, umo: str, contexts: list[dict], idle_due: bool) -> list[dict]:
+        """Above the limit, after idle: summarize and compress toward the target."""
         if "GroupMessage" in umo:
             return contexts
         limit = max(10, as_int(self._cfg("private_max_messages", 90), 90))
-        if len(contexts) <= limit:
+        if len(contexts) <= limit or not idle_due:
             return contexts
+        target = max(20, as_int(self._cfg("private_trim_target", 72), 72))
         prefix_n = max(0, as_int(self._cfg("compression.cache_prefix_messages", 24), 24))
         keep_turns = max(1, as_int(self._cfg("keep_recent_turns", 12), 12))
         recent_n = max(0, keep_turns * 2)
-        if prefix_n + recent_n >= limit:
+        if prefix_n + recent_n + 1 >= target:
             return contexts
-        excess = len(contexts) - limit
-        cut = prefix_n + excess
-        middle_end = len(contexts) - recent_n
-        # Never cut through a tool pair: move forward to the next user message.
-        while cut < middle_end and contexts[cut].get("role") != "user":
+        prefix_end = prefix_n
+        while prefix_end < len(contexts) and contexts[prefix_end].get("role") != "user":
+            prefix_end += 1
+        recent_start = max(prefix_end, len(contexts) - recent_n)
+        while recent_start > prefix_end and contexts[recent_start].get("role") != "user":
+            recent_start -= 1
+        if recent_start <= prefix_end or len(contexts) <= target:
+            return contexts
+        excess = max(1, len(contexts) - target + 1)
+        cut = prefix_end + excess
+        while cut < recent_start and contexts[cut].get("role") != "user":
             cut += 1
-        if cut >= middle_end:
-            cut = middle_end
-        trimmed = contexts[:prefix_n] + contexts[cut:]
+        cut = min(cut, recent_start)
+        if cut <= prefix_end:
+            return contexts
+        summary = self._summarize_dropped(contexts[prefix_end:cut])
+        middle = [{"role": "user", "content": summary}] if summary else []
+        trimmed = contexts[:prefix_end] + middle + contexts[cut:]
         logger.info(
-            "context_hygiene: private window | %s -> %s msgs | dropped middle %s",
-            len(contexts), len(trimmed), cut - prefix_n,
+            "context_hygiene: private window | %s -> %s msgs | summarized middle %s",
+            len(contexts), len(trimmed), cut - prefix_end,
         )
         return trimmed
 
@@ -874,6 +912,9 @@ class ContextHygiene(Star):
             umo = str(getattr(event, "unified_msg_origin", "") or "")
             await self._caption_current_images(req)
             now = time.time()
+            previous_at = self._last_request_at.get(umo)
+            idle_minutes = max(1, as_int(self._cfg("private_idle_minutes", 10), 10))
+            idle_due = bool(previous_at and now - previous_at >= idle_minutes * 60)
             active = self._cache_guard_active(umo, now)
             self._last_request_at[umo] = now
             if len(self._last_request_at) > 32:
@@ -882,7 +923,7 @@ class ContextHygiene(Star):
             contexts = getattr(req, "contexts", None)
             if not isinstance(contexts, list) or not contexts:
                 return
-            contexts = self._trim_private_window(umo, contexts)
+            contexts = self._trim_private_window(umo, contexts, idle_due)
             req.contexts = contexts
             try:
                 tools = getattr(req, "func_tool", None) or []
