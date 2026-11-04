@@ -12,15 +12,15 @@
       },
       "threshold_chars": {
         "description": "压缩触发字符数",
-        "hint": "模型窗口未知时的普通字符回退值：约 64K Token × 1.818；自动模式会按模型窗口重算。",
+        "hint": "按窗口推荐（字符）：24条→73,000；48条→91,000；72条→110,000；90条→124,000；极限150条→138,000。",
         "type": "int",
-        "default": 116364
+        "default": 110000
       },
       "threshold_tokens": {
         "description": "压缩触发估算 Token",
-        "hint": "模型窗口未知时的普通 Token 回退值；默认 64000。自动模式优先用模型 max_context_tokens × 0.6。",
+        "hint": "按窗口推荐（Token）：24条→40,000；48条→50,000；72条→60,500；90条→68,000；极限150条→76,000。",
         "type": "int",
-        "default": 64000
+        "default": 60500
       },
       "keep_recent_turns": {
         "description": "保留最近轮数",
@@ -89,26 +89,23 @@
           "max_steps": {
             "description": "最多模型步数",
             "type": "int",
-            "default": 15,
-            "hint": "72条默认：15步；窗口小可降至12步，窗口大可升至18步。"
+            "default": 15
           },
           "max_tool_calls": {
             "description": "最多工具调用次数",
             "type": "int",
-            "default": 5,
-            "hint": "72条默认：5次；窗口小可降至3次，窗口大可升至6次。"
+            "default": 5
           },
           "max_turn_seconds": {
             "description": "单轮最长秒数",
             "type": "int",
-            "default": 120,
-            "hint": "72条默认：120秒；窗口小可降至90秒，窗口大可升至150秒。"
+            "default": 120
           },
           "max_turn_new_tokens": {
             "description": "一条用户消息完整轮次新增 Token 上限",
             "type": "int",
             "default": 6000,
-            "hint": "只估算本轮新增，不含缓存命中的历史；包含本轮所有模型与工具步骤，不是单次工具调用。72条默认：6000；窗口小可降至4000，窗口大可升至7000。0=不限。"
+            "hint": "只估算本轮新增，不含缓存命中的历史；包含本轮所有模型与工具步骤，不是单次工具调用。0=不限。"
           }
         }
       },
@@ -119,26 +116,23 @@
           "max_steps": {
             "description": "最多模型步数",
             "type": "int",
-            "default": 24,
-            "hint": "72条默认：24步；窗口小可降至20步，窗口大可升至28步。"
+            "default": 24
           },
           "max_tool_calls": {
             "description": "最多工具调用次数",
             "type": "int",
-            "default": 8,
-            "hint": "72条默认：8次；窗口小可降至6次，窗口大可升至10次。"
+            "default": 8
           },
           "max_turn_seconds": {
             "description": "单轮最长秒数",
             "type": "int",
-            "default": 240,
-            "hint": "72条默认：240秒；窗口小可降至180秒，窗口大可升至300秒。"
+            "default": 240
           },
           "max_turn_new_tokens": {
             "description": "一条用户消息完整轮次新增 Token 上限",
             "type": "int",
-            "default": 10000,
-            "hint": "只估算本轮新增，不含缓存命中的历史；包含本轮所有模型与工具步骤，不是单次工具调用。72条默认：10000；窗口小可降至7000，窗口大可升至12000。0=不限。"
+            "default": 13200,
+            "hint": "只估算本轮新增，不含缓存命中的历史；包含本轮所有模型与工具步骤，不是单次工具调用。0=不限。"
           }
         }
       }
@@ -151,13 +145,13 @@
     "items": {
       "hard_threshold_chars": {
         "description": "兜底压缩字符数",
-        "hint": "同兜底 Token 的统计口径，按 0.55 估算字符。72条默认：160000；窗口每减少24条约减20000，每增加24条约增20000。",
+        "hint": "按窗口推荐（字符）：24条→116,000；48条→138,000；72条→160,000；90条→175,000；极限150条→189,000。",
         "type": "int",
         "default": 160000
       },
       "hard_threshold_tokens": {
         "description": "兜底压缩估算 Token",
-        "hint": "可压缩正文 + 工具定义 + 当前消息；不含人格、固定 system prompt、记忆注入、活跃图片。72条默认：88000；窗口每减少24条约减11000，每增加24条约增11000。",
+        "hint": "按窗口推荐（Token）：24条→64,000；48条→76,000；72条→88,000；90条→96,000；极限150条→104,000。",
         "type": "int",
         "default": 88000
       },
