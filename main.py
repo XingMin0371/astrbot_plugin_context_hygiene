@@ -28,6 +28,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 try:
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -56,10 +57,14 @@ try:
         as_bool,
         as_int,
         clean_history,
+        clean_memory_blocks,
         estimate_tokens,
         flatten_config,
         get_cfg,
+        is_compressible_message,
+        is_placeholder_only,
         message_chars,
+        normalize_message_lists,
         strip_tool_image_artifacts,
         truncate_oversized_messages,
     )
@@ -70,17 +75,21 @@ except ImportError:  # local/single-file import fallback
         as_bool,
         as_int,
         clean_history,
+        clean_memory_blocks,
         estimate_tokens,
         flatten_config,
         get_cfg,
+        is_compressible_message,
+        is_placeholder_only,
         message_chars,
+        normalize_message_lists,
         strip_tool_image_artifacts,
         truncate_oversized_messages,
     )
     from tool_policy import clean_tool_definitions, gate_official_tools  # type: ignore[no-redef]
 
 PLUGIN_NAME = "astrbot_plugin_context_hygiene"
-VERSION = "1.3.8"
+VERSION = "1.6.1"
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
 IMAGE_ARTIFACT_DIR_NAME = "image_artifacts"
 
@@ -102,7 +111,12 @@ class ContextHygiene(Star):
         self._context_cache: dict[str, tuple[str, int, list[dict]]] = {}
         self._last_request_at: dict[str, float] = {}
         self._message_seen_at: dict[str, dict[str, float]] = {}
+        self._compress_last_at: dict[str, float] = {}
         self._tool_policy_done = False
+        self._tool_policy_last_at = 0.0
+        self._prefix_memory_cleaned = False
+        self._structural_cache: dict[str, tuple[float, dict]] = {}
+        self._compression_cache: dict[str, tuple[str, float, list[dict]]] = {}
         self._last_artifact_cleanup = 0.0
         self._turn_guard_state: dict[str, dict] = {}
 
@@ -440,6 +454,32 @@ class ContextHygiene(Star):
             cfg["compression"] = compression
         compression["hard_threshold_chars"] = thresholds["hard_chars"]
         compression["hard_threshold_tokens"] = thresholds["hard_tokens"]
+        return cfg
+
+    def _weak_clean_config(self) -> dict:
+        cfg = self._clean_config()
+        normal_chars = as_int(cfg.get("threshold_chars", 72000), 72000)
+        normal_tokens = as_int(cfg.get("threshold_tokens", 39600), 39600)
+        compression = cfg.setdefault("compression", {})
+        compression["hard_threshold_chars"] = as_int(
+            self._cfg("weak_compression.hard_threshold_chars", normal_chars // 2),
+            normal_chars // 2,
+        )
+        compression["hard_threshold_tokens"] = as_int(
+            self._cfg("weak_compression.hard_threshold_tokens", normal_tokens // 2),
+            normal_tokens // 2,
+        )
+        compression["min_chars"] = as_int(
+            self._cfg("weak_compression.min_chars", 8000), 8000
+        )
+        cfg["threshold_chars"] = as_int(
+            self._cfg("weak_compression.threshold_chars", normal_chars // 2),
+            normal_chars // 2,
+        )
+        cfg["threshold_tokens"] = as_int(
+            self._cfg("weak_compression.threshold_tokens", normal_tokens // 2),
+            normal_tokens // 2,
+        )
         return cfg
 
     def _clean_contexts_cached(
@@ -972,12 +1012,16 @@ class ContextHygiene(Star):
         )
         return hashlib.sha1(payload.encode("utf-8", "ignore")).hexdigest()
 
-    def _weak_middle_boundary(self, umo: str, contexts: list[dict], now: float) -> int:
+    def _weak_middle_boundary(self, umo: str, contexts: list[dict], now: float,
+                              guard_minutes: int | None = None, force: bool = False) -> int:
         """Return the end of the old middle that lost its per-message protection."""
         prefix = max(0, as_int(self._cfg("compression.cache_prefix_messages", 24), 24))
         keep_turns = max(1, as_int(self._cfg("basic.keep_recent_turns", self._cfg("keep_recent_turns", 12)), 12))
         recent_start = max(prefix, len(contexts) - keep_turns * 2)
-        guard = max(0, as_int(self._cfg("cache_guard_minutes", 60), 60))
+        guard = max(0, as_int(
+            guard_minutes if guard_minutes is not None else self._cfg("cache_guard_minutes", 25),
+            25,
+        ))
         cutoff = now - guard * 60
         seen = self._message_seen_at.setdefault(umo, {})
         for idx, message in enumerate(contexts):
@@ -991,13 +1035,142 @@ class ContextHygiene(Star):
         if len(seen) > 800:
             for key in list(seen)[:len(seen) - 800]:
                 seen.pop(key, None)
-        boundary = prefix
-        while boundary < recent_start:
-            message = contexts[boundary]
-            if not isinstance(message, dict) or seen.get(f"{boundary}:{self._message_key(message)}", now) >= cutoff:
+        exact_end = prefix
+        while exact_end < recent_start:
+            message = contexts[exact_end]
+            if not isinstance(message, dict) or seen.get(f"{exact_end}:{self._message_key(message)}", now) >= cutoff:
                 break
-            boundary += 1
-        return boundary
+            exact_end += 1
+        if force:
+            return exact_end
+        batch = max(1, as_int(self._cfg("basic.batch_cleanup_messages", 8), 8))
+        if exact_end - prefix >= batch:
+            return exact_end
+        # Fallback: group first-seen timestamps into 10-minute buckets so a
+        # small tail still expires as one batch instead of moving every turn.
+        bucket = 600
+        bucket_end = prefix
+        while bucket_end < recent_start:
+            message = contexts[bucket_end]
+            if not isinstance(message, dict):
+                break
+            first = seen.get(f"{bucket_end}:{self._message_key(message)}", now)
+            bucket_start = int(first // bucket) * bucket
+            if bucket_start + guard * 60 > now:
+                break
+            bucket_end += 1
+        return bucket_end
+
+    def _structural_clean(self, contexts: list[dict]) -> int:
+        """Cache deterministic structural transforms by raw-message hash."""
+        now = time.time()
+        prefix = max(0, as_int(self._cfg("compression.cache_prefix_messages", 24), 24))
+        config_key = hashlib.sha1(
+            json.dumps(
+                {
+                    "images": self.config.get("images", {}),
+                    "max_current": self.config.get("tools", {}).get("max_current_result_chars", 3000),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                default=str,
+            ).encode("utf-8", "ignore")
+        ).hexdigest()
+        changed = 0
+        for idx, message in enumerate(contexts):
+            if not isinstance(message, dict):
+                continue
+            raw_key = hashlib.sha1(
+                json.dumps(message, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8", "ignore")
+            ).hexdigest()
+            key = f"{config_key}:{raw_key}"
+            cached = self._structural_cache.get(key)
+            if cached is not None:
+                contexts[idx] = copy.deepcopy(cached[1])
+                continue
+            temp = [copy.deepcopy(message)]
+            strip_tool_image_artifacts(temp)
+            truncate_oversized_messages(temp, 10000)
+            if (idx >= prefix and temp and isinstance(temp[0], dict)
+                    and temp[0].get("role") == "tool"):
+                normalize_message_lists(temp)
+            contexts[idx] = temp[0]
+            self._structural_cache[key] = (now, copy.deepcopy(temp[0]))
+            changed += 1
+        cutoff = now - 3 * 86400
+        stale = [k for k, (ts, _m) in self._structural_cache.items() if ts < cutoff]
+        for key in stale:
+            self._structural_cache.pop(key, None)
+        if len(self._structural_cache) > 300:
+            oldest = sorted(self._structural_cache.items(), key=lambda kv: kv[1][0])[:100]
+            for key, _ in oldest:
+                self._structural_cache.pop(key, None)
+        return changed
+
+    def _compression_cache_key(self, contexts: list[dict]) -> str:
+        payload = {
+            "contexts": contexts,
+            "config": {
+                "threshold_chars": self._cfg("basic.threshold_chars", 72000),
+                "threshold_tokens": self._cfg("basic.threshold_tokens", 39600),
+                "keep_recent_turns": self._cfg("basic.keep_recent_turns", 12),
+                "weak": self._cfg("weak_compression", {}),
+                "tools": self._cfg("tools", {}),
+            },
+        }
+        return hashlib.sha1(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8", "ignore")
+        ).hexdigest()
+
+    def _remove_placeholder_messages(self, umo: str, contexts: list[dict],
+                                     now: float, prefix: int, recent: int) -> list[dict]:
+        seen = self._message_seen_at.setdefault(umo, {})
+        max_count = max(1, as_int(self._cfg("compression.placeholder_max_messages", 30), 30))
+        max_days = max(1, as_int(self._cfg("compression.placeholder_max_days", 3), 3))
+        candidates = []
+        old_candidates = []
+        first_seen: dict[int, float] = {}
+        for idx, message in enumerate(contexts):
+            if idx < prefix or idx >= recent or not isinstance(message, dict):
+                continue
+            if message.get("role") not in {"user", "assistant"} or message.get("tool_calls"):
+                continue
+            if not is_placeholder_only(message):
+                continue
+            key = f"{idx}:{self._message_key(message)}"
+            if key not in seen:
+                seen[key] = now
+            first = seen[key]
+            first_seen[idx] = first
+            candidates.append(idx)
+            if now - first >= max_days * 86400:
+                old_candidates.append(idx)
+        if not candidates or (len(candidates) <= max_count and not old_candidates):
+            return contexts
+        if old_candidates:
+            day_groups: dict[str, list[int]] = {}
+            for idx in old_candidates:
+                day = time.strftime("%Y-%m-%d", time.localtime(first_seen[idx]))
+                day_groups.setdefault(day, []).append(idx)
+            drop = set(day_groups[min(day_groups)])
+        else:
+            drop = set(candidates[:max_count])
+        # Keep user/placeholder pairs intact: drop the following plain reply too.
+        for idx in list(drop):
+            message = contexts[idx]
+            if message.get("role") != "user" or idx + 1 >= recent:
+                continue
+            nxt = contexts[idx + 1]
+            if (isinstance(nxt, dict) and nxt.get("role") == "assistant"
+                    and not nxt.get("tool_calls")):
+                drop.add(idx + 1)
+        kept = [m for i, m in enumerate(contexts) if i not in drop]
+        if len(kept) != len(contexts):
+            logger.info(
+                "context_hygiene: placeholder GC | %s -> %s msgs | count=%s | old=%s",
+                len(contexts), len(kept), len(candidates), len(old_candidates),
+            )
+        return kept
 
     @filter.on_llm_request()
     async def filter_request(self, event: AstrMessageEvent, req: ProviderRequest) -> None:
@@ -1031,6 +1204,12 @@ class ContextHygiene(Star):
             previous_at = self._last_request_at.get(umo)
             idle_minutes = max(1, as_int(self._cfg("private_window.idle_minutes", self._cfg("private_idle_minutes", 10)), 10))
             idle_due = bool(previous_at and now - previous_at >= idle_minutes * 60)
+            placeholder_idle = max(1, as_int(self._cfg("compression.placeholder_idle_minutes", 10), 10))
+            placeholder_due = bool(previous_at and now - previous_at >= placeholder_idle * 60)
+            weak_idle = max(1, as_int(self._cfg("compression.weak_idle_minutes", 10), 10))
+            weak_idle_due = bool(previous_at and now - previous_at >= weak_idle * 60)
+            ttl_idle = max(1, as_int(self._cfg("tools.ttl_idle_minutes", 10), 10))
+            ttl_idle_due = bool(not previous_at or now - previous_at >= ttl_idle * 60)
             self._last_request_at[umo] = now
             if len(self._last_request_at) > 32:
                 self._last_request_at.pop(next(iter(self._last_request_at)))
@@ -1040,17 +1219,34 @@ class ContextHygiene(Star):
                 return
             contexts = self._trim_private_window(umo, contexts, idle_due)
             req.contexts = contexts
-            img_changed, img_saved = strip_tool_image_artifacts(contexts)
-            over_changed, over_saved = truncate_oversized_messages(contexts, 10000)
-            if img_changed or over_changed:
+            structural_changed = self._structural_clean(contexts)
+            if structural_changed:
                 req.contexts = contexts
-                logger.info(
-                    "context_hygiene: structural cleanup | images=%s/%s | oversized=%s/%s",
-                    img_changed, img_saved, over_changed, over_saved,
+                logger.info("context_hygiene: structural cleanup | messages=%s", structural_changed)
+            if not self._prefix_memory_cleaned:
+                once_stats = CleanStats()
+                clean_memory_blocks(contexts, self._clean_config(), once_stats, protect_prefix=False)
+                self._prefix_memory_cleaned = True
+                if once_stats.changed:
+                    req.contexts = contexts
+                    logger.info("context_hygiene: one-time prefix memory cleanup | blocks=%s",
+                                once_stats.memory_blocks_removed)
+            gc_prefix = max(0, as_int(self._cfg("compression.cache_prefix_messages", 24), 24))
+            gc_keep = max(1, as_int(self._cfg("basic.keep_recent_turns", 12), 12))
+            if placeholder_due:
+                contexts = self._remove_placeholder_messages(
+                    umo, contexts, now, gc_prefix, max(gc_prefix, len(contexts) - gc_keep * 2)
                 )
-            if not self._tool_policy_done:
+                req.contexts = contexts
+            interval = max(0, as_int(self._cfg("tools.definition_interval_minutes", 0), 0))
+            tool_policy_due = (
+                not self._tool_policy_done
+                or (interval > 0 and now - self._tool_policy_last_at >= interval * 60)
+            )
+            if tool_policy_due:
                 self._apply_tool_policy(event, req)
                 self._tool_policy_done = True
+                self._tool_policy_last_at = now
             try:
                 tools = getattr(req, "func_tool", None) or []
                 tool_chars = len(json.dumps(tools, ensure_ascii=False, default=str))
@@ -1067,23 +1263,96 @@ class ContextHygiene(Star):
             except Exception:
                 pass
             self._maybe_cleanup_backups()
-            weak_end = self._weak_middle_boundary(umo, contexts, now)
+            compression_key = self._compression_cache_key(contexts)
+            cached_compression = self._compression_cache.get(umo)
+            compression_hit = bool(
+                cached_compression
+                and cached_compression[0] == compression_key
+                and now - cached_compression[1] < 300
+            )
+            if compression_hit:
+                req.contexts = copy.deepcopy(cached_compression[2])
+                contexts = req.contexts
+            keep_turns = max(1, as_int(self._cfg("basic.keep_recent_turns", 12), 12))
+            recent_n = keep_turns * 2
+            normal_prefix = max(0, as_int(self._cfg("compression.cache_prefix_messages", 24), 24))
+            candidate = contexts[normal_prefix:-recent_n] if len(contexts) > recent_n + normal_prefix else []
+            cooldown_minutes = max(0, as_int(self._cfg("compression.cooldown_minutes", 10), 10))
+            compress_allowed = (
+                not compression_hit
+                and now - self._compress_last_at.get(umo, 0) >= cooldown_minutes * 60
+            )
+            normal_cfg = self._clean_config()
+            compressible = sum(
+                message_chars(m) for m in candidate if is_compressible_message(m)
+            )
+            normal_hit = (
+                compressible > as_int(normal_cfg.get("threshold_chars", 72000), 72000)
+                or estimate_tokens(compressible) > as_int(normal_cfg.get("threshold_tokens", 39600), 39600)
+            )
+            normal_done = False
+            if compress_allowed and candidate and normal_hit:
+                normal_cfg.setdefault("compression", {})["cache_prefix_messages"] = 0
+                normal_cfg["compression"]["cache_friendly"] = False
+                normal_cfg.setdefault("basic", {})["keep_recent_turns"] = 0
+                normal_cfg["keep_recent_turns"] = 0
+                normal_cfg.setdefault("tools", {})["ttl_idle_due"] = ttl_idle_due
+                for item in candidate:
+                    if isinstance(item, dict) and item.get("role") == "tool":
+                        normalize_message_lists([item])
+                cleaned, stats = clean_history(
+                    candidate, normal_cfg, skip_tool_images=True, normalize_lists=False
+                )
+                if stats.changed:
+                    req.contexts = contexts[:normal_prefix] + cleaned + contexts[-recent_n:]
+                    contexts = req.contexts
+                    normal_done = True
+                    self._compress_last_at[umo] = now
+                    logger.info(
+                        "context_hygiene: normal threshold compression | chars %s -> %s | msgs %s -> %s | prefix half kept",
+                        stats.before_chars, stats.after_chars,
+                        stats.messages_before, stats.messages_after,
+                    )
             prefix_n = max(0, as_int(self._cfg("compression.cache_prefix_messages", 24), 24))
-            if weak_end > prefix_n:
-                cfg = self._clean_config()
+            weak_end = self._weak_middle_boundary(umo, contexts, now)
+            cfg = self._weak_clean_config()
+            middle = contexts[prefix_n:max(prefix_n, len(contexts) - recent_n)]
+            weak_chars = sum(
+                message_chars(m) for m in middle if is_compressible_message(m)
+            )
+            weak_hard_hit = (
+                weak_chars >= as_int(self._cfg("weak_compression.hard_threshold_chars", 60000), 60000)
+                or estimate_tokens(weak_chars) >= as_int(self._cfg("weak_compression.hard_threshold_tokens", 33000), 33000)
+            )
+            if weak_hard_hit:
+                # Hard weak fallback: halve the age guard, still keep prefix/recent.
+                guard = max(0, as_int(self._cfg("cache_guard_minutes", 25), 25))
+                weak_end = self._weak_middle_boundary(
+                    umo, contexts, now, guard_minutes=max(0, guard // 2), force=True
+                )
+            if (compress_allowed and not normal_done and weak_end > prefix_n
+                    and (weak_hard_hit or weak_idle_due)):
                 compression = cfg.setdefault("compression", {})
                 compression["cache_prefix_messages"] = 0
                 compression["cache_friendly"] = False
-                cleaned, stats = clean_history(contexts[prefix_n:weak_end], cfg)
+                cfg.setdefault("basic", {})["keep_recent_turns"] = 0
+                cfg["keep_recent_turns"] = 0
+                cfg.setdefault("tools", {})["ttl_idle_due"] = ttl_idle_due
+                cleaned, stats = clean_history(contexts[prefix_n:weak_end], cfg, skip_tool_images=True)
                 if stats.changed:
                     req.contexts = contexts[:prefix_n] + cleaned + contexts[weak_end:]
                     contexts = req.contexts
+                    self._compress_last_at[umo] = now
                     logger.info(
                         "context_hygiene: weak middle cleaned | chars %s -> %s | msgs %s -> %s | tools %s",
                         stats.before_chars, stats.after_chars,
                         stats.messages_before, stats.messages_after,
                         stats.tool_messages_removed,
                     )
+            if not compression_hit:
+                self._compression_cache[umo] = (compression_key, now, copy.deepcopy(contexts))
+                if len(self._compression_cache) > 32:
+                    self._compression_cache.pop(next(iter(self._compression_cache)))
         except Exception as exc:  # noqa: BLE001
             # Fail open: an error must never break the user's request.
             logger.warning("context_hygiene: request filter skipped (%s: %s)", type(exc).__name__, exc)

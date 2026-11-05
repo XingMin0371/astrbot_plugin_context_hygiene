@@ -9,12 +9,11 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-import os
 import re
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -161,6 +160,105 @@ def text_of(message: Any) -> str:
                 parts.append(str(part.get("text", "")))
         return "\n".join(parts)
     return str(content or "")
+
+
+PLACEHOLDER_TEXTS = (
+    "[图片已省略]",
+    "[图片工具结果已省略]",
+    "[内容过长已截断]",
+    "[历史内容已压缩]",
+    "[早期记忆块已省略]",
+)
+_PLACEHOLDER_PREFIXES = ()
+
+
+def normalize_message_lists(messages: list[dict]) -> int:
+    """Clean/merge/dedupe list content parts without flattening multimodal data."""
+    changed = 0
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        new_parts = []
+        seen = set()
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            ptype = part.get("type")
+            if ptype in TEXT_TYPES:
+                text = str(part.get("text", ""))
+                if not text.strip():
+                    continue
+                if new_parts and new_parts[-1].get("type") in TEXT_TYPES:
+                    new_parts[-1]["text"] = str(new_parts[-1].get("text", "")).rstrip() + "\n" + text.lstrip()
+                    continue
+                key = ("text", text)
+                if key in seen:
+                    continue
+                seen.add(key)
+                new_parts.append(dict(part))
+                continue
+            if ptype in IMAGE_TYPES:
+                if not _image_has_payload(part):
+                    continue
+                key = ("image", json.dumps(part, ensure_ascii=False, sort_keys=True, default=str))
+                if key in seen:
+                    continue
+                seen.add(key)
+                new_parts.append(dict(part))
+                continue
+            key = ("part", json.dumps(part, ensure_ascii=False, sort_keys=True, default=str))
+            if key in seen:
+                continue
+            seen.add(key)
+            new_parts.append(part)
+        if new_parts != content:
+            _set_content(message, new_parts)
+            changed += 1
+    return changed
+
+
+def _image_has_payload(part: dict) -> bool:
+    nested = part.get("image_url")
+    values = [part, nested] if isinstance(nested, dict) else [part]
+    for obj in values:
+        for key in ("url", "image_url", "data", "file"):
+            if isinstance(obj.get(key), str) and obj.get(key).strip():
+                return True
+    return False
+
+
+def is_placeholder_only(message: Any) -> bool:
+    text = text_of(message).strip()
+    if not text:
+        return False
+    remaining = text
+    for marker in PLACEHOLDER_TEXTS:
+        remaining = remaining.replace(marker, "")
+    for prefix in _PLACEHOLDER_PREFIXES:
+        remaining = re.sub(re.escape(prefix) + r"[^\]]*\]", "", remaining)
+    return not remaining.strip()
+
+
+def is_compressible_message(message: Any) -> bool:
+    """True only when compress_old can actually rewrite this message."""
+    if not isinstance(message, dict):
+        return False
+    if message.get("role") not in {"user", "assistant"} or message.get("tool_calls"):
+        return False
+    content = message.get("content")
+    if isinstance(content, list):
+        if any(
+            not isinstance(part, dict) or part.get("type") not in TEXT_TYPES
+            for part in content
+        ):
+            return False
+    elif not isinstance(content, str):
+        return False
+    text = text_of(message)
+    return bool(text) and COMPRESS_MARKER not in text and OVERSIZE_MARKER not in text
 
 
 def message_chars(message: Any) -> int:
@@ -384,6 +482,20 @@ def _call_ids(message: dict) -> list[str]:
     return ids
 
 
+_TOOL_SEEN: dict[str, float] = {}
+
+
+def _tool_seen_ts(message: dict) -> float:
+    """Fallback first-seen clock for tool messages without timestamps."""
+    key = hashlib.sha1(text_of(message).encode("utf-8", "ignore")).hexdigest()
+    now = time.time()
+    if key not in _TOOL_SEEN:
+        if len(_TOOL_SEEN) > 2000:
+            _TOOL_SEEN.clear()
+        _TOOL_SEEN[key] = now
+    return _TOOL_SEEN[key]
+
+
 def _message_ts(message: dict) -> float | None:
     for key in ("created_at", "timestamp", "time", "ts"):
         value = message.get(key)
@@ -412,11 +524,27 @@ def _truncate_tool_result(message: dict, max_chars: int, stats: CleanStats) -> N
     # Keep the beginning and end: tool errors/exit codes often live at the tail.
     head_len = max(80, max_chars * 2 // 3)
     tail_len = max(40, max_chars - head_len - 24)
-    message["content"] = (
+    truncated = (
         text[:head_len].rstrip()
         + "\n...[工具结果中间已截断]...\n"
         + text[-tail_len:].lstrip()
     )
+    if isinstance(content, list):
+        # Preserve non-text parts (images etc.) and replace only text parts.
+        new_parts = []
+        text_inserted = False
+        for part in content:
+            if isinstance(part, dict) and part.get("type") in TEXT_TYPES:
+                if not text_inserted:
+                    new_parts.append({"type": "text", "text": truncated})
+                    text_inserted = True
+                continue
+            new_parts.append(part)
+        if not text_inserted:
+            new_parts.append({"type": "text", "text": truncated})
+        _set_content(message, new_parts)
+    else:
+        message["content"] = truncated
     stats.tool_results_summarized += 1
 
 
@@ -434,18 +562,22 @@ def cap_current_tool_results(messages: list[dict], cfg: Any, stats: CleanStats) 
 
 
 def clean_tools(messages: list[dict], cfg: Any, stats: CleanStats) -> None:
+    if not as_bool(get_cfg(cfg, "tools.ttl_idle_due", True), True):
+        return
     keep_recent = max(1, as_int(get_cfg(cfg, "tools.keep_recent_pairs", 3), 3))
     ttl_minutes = max(0, as_int(get_cfg(cfg, "tools.ttl_minutes", 65), 65))
+    ttl_min_count = max(1, as_int(get_cfg(cfg, "tools.ttl_min_count", 6), 6))
+    ttl_bucket = max(1, as_int(get_cfg(cfg, "tools.ttl_bucket_minutes", 15), 15))
+    now_ts = time.time()
+    bucket_ts = int(now_ts // (ttl_bucket * 60)) * ttl_bucket * 60
     remove_orphan = as_bool(get_cfg(cfg, "tools.remove_orphan", True), True)
     summarize = as_bool(get_cfg(cfg, "tools.summarize_long", True), True)
     max_result_chars = max(200, as_int(get_cfg(cfg, "tools.max_result_chars", 6000), 6000))
-    keep_turns = max(0, as_int(get_cfg(cfg, "basic.keep_recent_turns", get_cfg(cfg, "keep_recent_turns", 12)), 12))
     # Only clean tool traffic older than this many turns; keep recent turns
     # byte-stable so the prompt cache prefix is not disturbed.
     tool_keep_turns = max(1, as_int(get_cfg(cfg, "tools.keep_recent_turns", 30), 30))
     tool_recent_cutoff = max(0, len(messages) - tool_keep_turns * 2)
-    recent_cutoff = max(0, len(messages) - keep_turns * 2)
-    cutoff = datetime.now(timezone.utc).timestamp() - ttl_minutes * 60 if ttl_minutes else None
+    cutoff = bucket_ts - ttl_minutes * 60 if ttl_minutes else None
 
     calls: list[tuple[int, str, bool, bool]] = []
     for i, message in enumerate(messages):
@@ -454,12 +586,20 @@ def clean_tools(messages: list[dict], cfg: Any, stats: CleanStats) -> None:
         if message.get("role") == "assistant":
             for cid in _call_ids(message):
                 ts = _message_ts(message)
-                old = bool(cutoff and ts is not None and ts < cutoff)
-                calls.append((i, cid, old, ts is not None))
+                if ts is None:
+                    ts = _tool_seen_ts(message)
+                old = bool(cutoff and ts < cutoff)
+                calls.append((i, cid, old, True))
+
+    expired_ids = {cid for _, cid, old, _ in calls if old}
+    ttl_batch_ok = not cutoff or len(expired_ids) > ttl_min_count
 
     start = _cache_start(cfg)
     recent_ids = {cid for _, cid, _, _ in calls[-keep_recent:]}
     keep_ids = set(recent_ids)
+    if not ttl_batch_ok:
+        # Do not expire tools yet, but still allow orphan/empty cleanup below.
+        keep_ids.update(cid for _, cid, _, _ in calls)
     # Preserve the cache prefix, including its tool calls.
     for idx, cid, _old, _has_ts in calls:
         if idx < start:
@@ -695,7 +835,7 @@ COMPRESS_MARKER = "...[历史内容已压缩]..."
 
 
 def _compress_text(text: str, ratio: float) -> str:
-    if not text or ratio >= 1 or COMPRESS_MARKER in text:
+    if not text or ratio >= 1 or COMPRESS_MARKER in text or OVERSIZE_MARKER in text:
         return text
     target = max(80, int(len(text) * max(0.05, min(ratio, 0.9))))
     if len(text) <= target:
@@ -710,11 +850,7 @@ def compress_old(messages: list[dict], cfg: Any, stats: CleanStats, before_chars
         return
     # 阈值只统计实际会被压缩的内容：user/assistant，且不含 tool_calls。
     compressible_chars = sum(
-        message_chars(m)
-        for m in messages
-        if isinstance(m, dict)
-        and m.get("role") in {"user", "assistant"}
-        and not m.get("tool_calls")
+        message_chars(m) for m in messages if is_compressible_message(m)
     )
     threshold_chars = max(500, as_int(get_cfg(cfg, "threshold_chars", 126500), 126500))
     threshold_tokens = max(500, as_int(get_cfg(cfg, "threshold_tokens", 75000), 75000))
@@ -724,7 +860,7 @@ def compress_old(messages: list[dict], cfg: Any, stats: CleanStats, before_chars
     if compressible_chars < min_chars:
         return
     ratio = max(0.05, min(0.9, as_float(get_cfg(cfg, "compression.keep_ratio", 0.333), 0.333)))
-    keep_turns = max(1, as_int(get_cfg(cfg, "basic.keep_recent_turns", get_cfg(cfg, "keep_recent_turns", 12)), 12))
+    keep_turns = max(0, as_int(get_cfg(cfg, "basic.keep_recent_turns", get_cfg(cfg, "keep_recent_turns", 12)), 12))
     cutoff = max(0, len(messages) - keep_turns * 2)
     cache_friendly = as_bool(get_cfg(cfg, "compression.cache_friendly", True), True)
     cache_prefix = max(0, as_int(get_cfg(cfg, "compression.cache_prefix_messages", 24), 24))
@@ -732,9 +868,7 @@ def compress_old(messages: list[dict], cfg: Any, stats: CleanStats, before_chars
     for i, message in enumerate(messages):
         if i < start or i >= cutoff or not isinstance(message, dict):
             continue
-        if message.get("role") not in {"user", "assistant"}:
-            continue
-        if message.get("tool_calls") or message.get("role") == "tool":
+        if not is_compressible_message(message):
             continue
         content = message.get("content")
         if isinstance(content, str):
@@ -743,9 +877,6 @@ def compress_old(messages: list[dict], cfg: Any, stats: CleanStats, before_chars
                 _set_content(message, new)
                 stats.messages_compressed += 1
         elif isinstance(content, list):
-            # Only compress pure text messages; leave multimodal messages alone.
-            if any(isinstance(p, dict) and p.get("type") not in TEXT_TYPES for p in content):
-                continue
             text = text_of(message)
             new = _compress_text(text, ratio)
             if new != text:
@@ -821,10 +952,12 @@ def _memory_message_time(message: dict) -> float | None:
     return None
 
 
-def clean_memory_blocks(messages: list[dict], cfg: Any, stats: CleanStats) -> None:
+def clean_memory_blocks(messages: list[dict], cfg: Any, stats: CleanStats,
+                        protect_prefix: bool = True) -> None:
     """Keep the newest memory injections and protect blocks younger than min_age."""
     if not as_bool(get_cfg(cfg, "memory_blocks.enabled", True), True):
         return
+    start = _cache_start(cfg) if protect_prefix else 0
     keep = max(0, as_int(get_cfg(cfg, "memory_blocks.keep_latest", 5), 5))
     try:
         min_age_hours = max(0.0, float(get_cfg(cfg, "memory_blocks.min_age_hours", 12) or 12))
@@ -836,7 +969,7 @@ def clean_memory_blocks(messages: list[dict], cfg: Any, stats: CleanStats) -> No
     changed_seen = False
     hits: list[tuple[int, str]] = []
     for i, message in enumerate(messages):
-        if not isinstance(message, dict) or message.get("role") != "user":
+        if i < start or not isinstance(message, dict) or message.get("role") != "user":
             continue
         text = _memory_text(message.get("content"))
         if MEMORY_MARKER not in text:
@@ -876,7 +1009,8 @@ def clean_memory_blocks(messages: list[dict], cfg: Any, stats: CleanStats) -> No
         stats.memory_blocks_removed += 1
 
 
-def clean_history(messages: Any, cfg: Any) -> tuple[list[dict], CleanStats]:
+def clean_history(messages: Any, cfg: Any, skip_tool_images: bool = False,
+                  normalize_lists: bool = True) -> tuple[list[dict], CleanStats]:
     """Return a cleaned copy and statistics; never mutates the input list."""
     if not isinstance(messages, list):
         return [], CleanStats()
@@ -885,11 +1019,14 @@ def clean_history(messages: Any, cfg: Any) -> tuple[list[dict], CleanStats]:
         before_chars=sum(message_chars(m) for m in working),
         messages_before=len(working),
     )
+    if normalize_lists:
+        normalize_message_lists(working)
     clean_reminders(working, cfg, stats)
     dedupe_old(working, cfg, stats)
     if as_bool(get_cfg(cfg, "tools.cleanup_tools", False), False):
         clean_tools(working, cfg, stats)
-    strip_tool_image_artifacts(working)
+    if not skip_tool_images:
+        strip_tool_image_artifacts(working)
     clean_images(working, cfg, stats)
     cap_current_tool_results(working, cfg, stats)
     clean_memory_blocks(working, cfg, stats)

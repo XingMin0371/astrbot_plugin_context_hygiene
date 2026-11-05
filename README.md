@@ -108,26 +108,27 @@ data/plugin_data/astrbot_plugin_context_hygiene/backups/
 
 ```yaml
 enabled: true
-threshold_chars: 116364
-threshold_tokens: 64000
-keep_recent_turns: 24
-cache_guard_minutes: 75
+threshold_chars: 72000
+threshold_tokens: 39600
+keep_recent_turns: 12
+cache_guard_minutes: 25
+batch_cleanup_messages: 8
 
-auto_threshold: true
-threshold_ratio: 0.6
+auto_threshold: false
+threshold_ratio: 0.536
 
 turn_guard:
   enabled: true
   interactive:
-    max_steps: 20
-    max_tool_calls: 8
-    max_turn_seconds: 120
-    max_turn_new_tokens: 9000
+    max_steps: 6
+    max_tool_calls: 4
+    max_turn_seconds: 180
+    max_turn_new_tokens: 5000
   background:
-    max_steps: 30
-    max_tool_calls: 12
-    max_turn_seconds: 240
-    max_turn_new_tokens: 15000
+    max_steps: 9
+    max_tool_calls: 7
+    max_turn_seconds: 300
+    max_turn_new_tokens: 12000
 
 reminder:
   dedupe: true
@@ -186,57 +187,56 @@ tools.max_current_result_chars: 12000
 ### 工具清理与 memory5
 
 ```yaml
-tools.skip_cleanup: false
+tools.cleanup_tools: true
 ```
 
-`skip_cleanup` 手动开启后，本插件不再清理工具调用/结果。  
-检测到其他工具压缩插件开启时会自动跳过；没有检测到则按默认值正常清理。
+关闭 `cleanup_tools` 后，本插件不清理工具调用/结果。  
+本插件不会自动探测其他工具压缩插件；同时安装 fish 日记时，建议只保留一个工具管理者。
 
-### 自动阈值与兜底压缩
+### 压缩阈值
 
 ```yaml
-auto_threshold: true
-threshold_ratio: 0.6
+auto_threshold: false
+threshold_ratio: 0.536
 compression:
-  hard_threshold_ratio: 0.8
-  hard_threshold_chars: 174545
-  hard_threshold_tokens: 96000
+  enabled: true
+  keep_ratio: 0.333
+  min_chars: 12000
+  cache_prefix_messages: 24
+  cooldown_minutes: 10
+  placeholder_max_messages: 30
+  placeholder_max_days: 3
+  placeholder_idle_minutes: 10
+  weak_idle_minutes: 10
+
+weak_compression:
+  threshold_chars: 36000
+  threshold_tokens: 19800
+  hard_threshold_chars: 60000
+  hard_threshold_tokens: 33000
+  min_chars: 8000
 ```
 
-开启 `auto_threshold` 时，优先读取模型的 `max_context_tokens`：
+正常阈值触发后完整保护前缀和最近轮，但不再等待消息弱保护期。
+
+正常兜底已删除；只有弱保护段保留兜底：
 
 ```text
-普通阈值 = 模型窗口 × 0.6
-兜底阈值 = 模型窗口 × 0.8
-字符数 = Token ÷ 0.55
+弱兜底触发 → 缓存保护时间减半
 ```
-
-模型没有提供窗口时，回退到：
-
-```text
-普通：64000 Token / 116364 字符
-兜底：96000 Token / 174545 字符
-```
-
-超过兜底阈值时，即使缓存保护仍有效，也强制清理/压缩一次，避免持续聊天把清理饿死。
 
 统计口径：
 
 ```text
-普通阈值：
-  历史文本 + 工具结果 + 旧提醒 + 重复内容
-  不含图片
-
-兜底阈值：
-  可压缩历史正文
-  + 工具定义
-  + 当前用户消息
-  + 其他请求文本
-  不含人格、固定 system prompt、记忆注入、活跃图片
+只统计 user/assistant
+不含 tool
+不含工具定义
+不含图片/多模态
+不含带 [内容过长已截断] 的消息
+不含带 [历史内容已压缩] 的消息
 ```
 
-新图片在入库时生成短标签；旧图片默认不事后替换，因此不参与普通压缩。  
-旧图片兜底默认不启用，避免为了图片反复打断缓存。
+新图片在入库时生成短标签；旧图片默认不事后替换，因此不参与普通压缩。
 
 ### 压缩比例
 
@@ -246,11 +246,13 @@ compression:
 
 压缩是确定性的首尾截断，不调用 LLM。
 
-### 活跃缓存保护
+### 缓存保护
 
-`cache_guard_minutes: 75` 表示最近 120 分钟内有请求时跳过旧上下文清理和工具消息清理；空闲后再做一次完整清理。
+`cache_guard_minutes: 25` 是消息弱保护期：中间旧消息超过 25 分钟才进入弱段清理；前缀和最近轮始终强保护。
 
-`cache_prefix_messages: 65` 表示前 105 条消息不参与压缩/去重/图片替换/工具裁剪，尽量保持 Prompt Cache 前缀稳定。
+`cache_prefix_messages: 24` 表示前 24 条消息不参与弱段压缩/去重/图片替换/工具裁剪，尽量保持 Prompt Cache 前缀稳定。
+
+正常阈值触发时完整保护这 24 条前缀，但不再等待弱保护期。
 
 ### 工具调用
 
@@ -263,7 +265,7 @@ tool result
 
 默认保留最近 3 对，删除更早的完整对和孤立 `tool` 消息。
 
-`ttl_minutes` 只在消息带有时间戳时参与判断；请求上下文通常没有时间戳，因此主要按保留对数控制。
+`ttl_minutes: 20` 只在空闲 `ttl_idle_minutes: 10` 后执行；按 `ttl_bucket_minutes: 15` 取整，过期调用超过 `ttl_min_count: 6` 条才一次性删除。没有时间戳时用首次 seen 时间兜底。
 
 超长工具结果默认不压缩；开启后只做确定性截断。
 

@@ -12,27 +12,33 @@
       },
       "threshold_chars": {
         "description": "压缩触发字符数",
-        "hint": "按窗口推荐（字符）：24条→65,000；48条→87,000；72条→110,000；90条→124,000；极限→145,000。 只统计 user/assistant，不含工具消息。",
+        "hint": "达到后完整保护前缀和最近轮，无视缓存保护时间；只统计 user/assistant，不含工具消息。",
         "type": "int",
-        "default": 110000
+        "default": 72000
       },
       "threshold_tokens": {
         "description": "压缩触发估算 Token",
-        "hint": "按窗口推荐（Token）：24条→36,000；48条→48,000；72条→60,500；90条→68,000；极限→80,000。 只统计 user/assistant，不含工具消息。",
+        "hint": "达到后完整保护前缀和最近轮，无视缓存保护时间；只统计 user/assistant，不含工具消息。",
         "type": "int",
-        "default": 60500
+        "default": 39600
       },
       "keep_recent_turns": {
         "description": "保留最近轮数",
-        "hint": "计算：上下文窗口条数 ÷ 6（约每轮 2 条消息）。推荐 4/8/12/15/极限；极限 25 轮。",
+        "hint": "按窗口推荐：24条→4轮；48条→8轮；72条→12轮；90条→15轮；极限→25轮。最近轮为强保护。",
         "type": "int",
         "default": 12
       },
       "cache_guard_minutes": {
-        "description": "活跃缓存保护（分钟）",
-        "hint": "按窗口推荐：24条→45分钟；48条→60分钟；72条→75分钟；90条→90分钟；极限→120分钟。",
+        "description": "消息弱保护期（分钟）",
+        "hint": "按 72 条窗口推荐：24条→15分钟；48条→20分钟；72条→25分钟；90条→30分钟；极限→40分钟。前缀和最近轮始终强保护，只影响中间旧消息。",
         "type": "int",
-        "default": 75
+        "default": 25
+      },
+      "batch_cleanup_messages": {
+        "description": "批量清理消息数",
+        "type": "int",
+        "default": 8,
+        "hint": "中间过期消息累计达到该数量才清理一次，默认 8；不足时按 10 分钟时间桶同批过期。"
       },
       "auto_threshold": {
         "description": "自动按模型窗口计算压缩阈值",
@@ -53,22 +59,40 @@
     "hint": "默认使用确定性首尾截断，不调用模型，不产生额外 Token。",
     "type": "object",
     "items": {
-      "hard_threshold_chars": {
-        "description": "兜底压缩字符数",
-        "hint": "按窗口推荐（字符）：24条→105,000；48条→131,000；72条→160,000；90条→175,000；极限→189,000。 只统计 user/assistant，不含工具消息。",
-        "type": "int",
-        "default": 160000
-      },
-      "hard_threshold_tokens": {
-        "description": "兜底压缩估算 Token",
-        "hint": "按窗口推荐（Token）：24条→58,000；48条→72,000；72条→88,000；90条→96,000；极限→104,000。 只统计 user/assistant，不含工具消息。",
-        "type": "int",
-        "default": 88000
-      },
       "enabled": {
         "description": "启用旧对话压缩",
         "type": "bool",
         "default": true
+      },
+      "cooldown_minutes": {
+        "description": "压缩冷却（分钟）",
+        "type": "int",
+        "default": 10,
+        "hint": "正常/弱段压缩成功后，多少分钟内不再压缩；默认 10，推荐 5–15。"
+      },
+      "weak_idle_minutes": {
+        "description": "弱段压缩空闲分钟",
+        "type": "int",
+        "default": 10,
+        "hint": "非强制弱段压缩只在空闲达到该分钟数后执行；默认 10，推荐 5–15。"
+      },
+      "placeholder_max_messages": {
+        "description": "占位符批量清理条数",
+        "type": "int",
+        "default": 30,
+        "hint": "历史占位符消息超过该条数时清理整条消息；默认 30。"
+      },
+      "placeholder_max_days": {
+        "description": "占位符保留天数",
+        "type": "int",
+        "default": 3,
+        "hint": "占位符消息超过该天数时清理整条消息；默认 3。"
+      },
+      "placeholder_idle_minutes": {
+        "description": "占位符清理空闲分钟",
+        "type": "int",
+        "default": 10,
+        "hint": "距离上次请求达到该分钟数才执行占位符清理；默认 10，推荐 5–15。"
       },
       "keep_ratio": {
         "description": "旧文本保留比例",
@@ -79,8 +103,8 @@
       "min_chars": {
         "description": "最小压缩长度",
         "type": "int",
-        "default": 16000,
-        "hint": "按窗口推荐：24条→10,000；48条→14,000；72条→16,000；90条→20,000；极限→24,000。"
+        "default": 12000,
+        "hint": "按 72 条窗口推荐：24条→4,000；48条→8,000；72条→12,000；90条→15,000；极限→20,000。"
       },
       "cache_friendly": {
         "description": "保留前缀以利用 Prompt Cache",
@@ -89,16 +113,47 @@
         "default": true
       },
       "cache_prefix_messages": {
-        "description": "保留前缀消息数",
-        "hint": "缓存友好模式下保护的前缀消息数；默认 24。",
+        "description": "前缀消息数",
+        "hint": "正常压缩完整保护此前缀；弱段也保护完整前缀，默认 24。",
         "type": "int",
         "default": 24
+      }
+    }
+  },
+  "weak_compression": {
+    "description": "过期段压缩阈值",
+    "type": "object",
+    "hint": "只作用于中间弱保护段；建议均设为正常阈值的一半。",
+    "items": {
+      "threshold_chars": {
+        "description": "过期段压缩触发字符数",
+        "type": "int",
+        "default": 36000,
+        "hint": "建议为正常阈值的一半。"
       },
-      "hard_threshold_ratio": {
-        "description": "兜底压缩阈值比例",
-        "type": "float",
-        "default": 0.756,
-        "hint": "自动阈值默认关闭；仅在开启自动模式时生效。"
+      "threshold_tokens": {
+        "description": "过期段压缩触发 Token",
+        "type": "int",
+        "default": 19800,
+        "hint": "建议为正常阈值的一半。"
+      },
+      "hard_threshold_chars": {
+        "description": "过期段强制压缩字符数",
+        "type": "int",
+        "default": 60000,
+        "hint": "中间弱保护段超过该字符数时，缓存保护时间减半后强制压缩中间段；前缀和最近轮仍受保护。"
+      },
+      "hard_threshold_tokens": {
+        "description": "过期段强制压缩 Token",
+        "type": "int",
+        "default": 33000,
+        "hint": "中间弱保护段超过该 Token 数时，缓存保护时间减半后强制压缩中间段；前缀和最近轮仍受保护。"
+      },
+      "min_chars": {
+        "description": "过期段最小压缩字符",
+        "type": "int",
+        "default": 8000,
+        "hint": "建议为正常最小压缩字符的一半；默认 8000。"
       }
     }
   },
@@ -231,15 +286,21 @@
     "items": {
       "keep_recent_turns": {
         "description": "工具消息保留轮数",
-        "hint": "只清理该轮数之前的工具调用/结果。",
+        "hint": "按 72 条窗口推荐：24条→3轮；48条→6轮；72条→9轮；90条→12轮；极限→15轮。",
         "type": "int",
-        "default": 12
+        "default": 9
       },
       "cleanup_tools": {
         "description": "工具消息管理",
         "hint": "默认关闭；打开将进行工具消息控制，可与 memory5 总预算压缩同时使用。",
         "type": "bool",
         "default": false
+      },
+      "definition_interval_minutes": {
+        "description": "工具定义重清理间隔（分钟）",
+        "type": "int",
+        "default": 0,
+        "hint": "0=只在插件启动后第一次请求清理；大于 0 时每隔该分钟数重新清理一次，推荐 30–120。"
       },
       "max_current_result_chars": {
         "description": "当前用户轮单条工具结果硬上限",
@@ -261,9 +322,27 @@
       },
       "ttl_minutes": {
         "description": "工具调用保留分钟数",
-        "hint": "历史消息带时间戳时按时间判断；没有时间戳时按保留对数处理。推荐 45/55/65/75/90；活跃期间不清理。",
+        "hint": "按 72 条窗口推荐：24条→10分钟；48条→15分钟；72条→20分钟；90条→25分钟；极限→30分钟。活跃会话中不会清理最近保护的工具调用。",
         "type": "int",
-        "default": 65
+        "default": 20
+      },
+      "ttl_idle_minutes": {
+        "description": "工具 TTL 空闲分钟",
+        "type": "int",
+        "default": 10,
+        "hint": "连续聊天时不按 TTL 清理；空闲达到该分钟数才执行，默认 10，推荐 5–15。"
+      },
+      "ttl_min_count": {
+        "description": "工具 TTL 最小条数",
+        "type": "int",
+        "default": 6,
+        "hint": "过期工具调用超过该条数才一次性清理；默认 6，即超过 6 条才处理。"
+      },
+      "ttl_bucket_minutes": {
+        "description": "工具 TTL 时间桶",
+        "type": "int",
+        "default": 15,
+        "hint": "TTL 按该分钟数取整，避免同一批工具逐条消失；默认 15，推荐 10–20。"
       },
       "keep_recent_pairs": {
         "description": "保留最近工具调用对数",
