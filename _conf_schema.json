@@ -73,8 +73,8 @@
       "placeholder_max_messages": {
         "description": "占位符批量清理条数",
         "type": "int",
-        "default": 30,
-        "hint": "历史占位符消息超过该条数时清理整条消息；默认 30。"
+        "default": 40,
+        "hint": "历史占位符消息超过该条数时清理整条消息；默认 40。"
       },
       "placeholder_max_days": {
         "description": "占位符保留天数",
