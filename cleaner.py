@@ -596,6 +596,101 @@ def clean_images(messages: list[dict], cfg: Any, stats: CleanStats) -> None:
             _set_content(message, new_parts)
 
 
+TOOL_IMAGE_RE = re.compile(r"^\[Image from tool\b.*\]$", re.I | re.S)
+TOOL_IMAGE_PLACEHOLDER = "[图片工具结果已省略]"
+
+
+def strip_tool_image_artifacts(messages: list[dict]) -> tuple[int, int]:
+    """Drop tool-image marker text and its inline base64 image parts.
+
+    These are stored as normal user messages, so clean_images() does not see
+    them as image parts when the marker sits beside the image payload.
+    """
+    changed = 0
+    saved = 0
+    for message in messages:
+        if not isinstance(message, dict) or message.get("role") != "user":
+            continue
+        content = message.get("content")
+        before = message_chars(message)
+        if isinstance(content, str):
+            if "Image from tool" not in content:
+                continue
+            new = re.sub(r"\[Image from tool\b[^\]]*\]", TOOL_IMAGE_PLACEHOLDER, content)
+            if new != content:
+                _set_content(message, new)
+        elif isinstance(content, list):
+            has_marker = any(
+                isinstance(part, dict)
+                and isinstance(part.get("text"), str)
+                and TOOL_IMAGE_RE.match(part["text"].strip())
+                for part in content
+            )
+            if not has_marker:
+                continue
+            new_parts = []
+            for part in content:
+                if isinstance(part, dict):
+                    text = part.get("text")
+                    if isinstance(text, str) and TOOL_IMAGE_RE.match(text.strip()):
+                        continue
+                    if part.get("type") in IMAGE_TYPES:
+                        continue
+                new_parts.append(part)
+            if not new_parts:
+                new_parts = [{"type": "text", "text": TOOL_IMAGE_PLACEHOLDER}]
+            _set_content(message, new_parts)
+        else:
+            continue
+        after = message_chars(message)
+        if after != before:
+            changed += 1
+            saved += max(0, before - after)
+    return changed, saved
+
+
+OVERSIZE_MARKER = "\n[内容过长已截断]\n"
+
+
+def truncate_oversized_messages(messages: list[dict], limit: int = 10000) -> tuple[int, int]:
+    """Hard safety cap: structural garbage is cut even inside cache protection."""
+    limit = max(1000, int(limit))
+    changed = 0
+    saved = 0
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        before = message_chars(message)
+        if before <= limit:
+            continue
+        content = message.get("content")
+        budget = max(200, limit // 2)
+        if isinstance(content, str):
+            new = content[:budget].rstrip() + OVERSIZE_MARKER + content[-budget:].lstrip()
+        elif isinstance(content, list):
+            new_parts = []
+            remaining = limit
+            for part in content:
+                if isinstance(part, dict) and isinstance(part.get("text"), str):
+                    text = part["text"]
+                    if len(text) > remaining:
+                        keep = max(100, remaining // 2)
+                        text = text[:keep].rstrip() + OVERSIZE_MARKER + text[-keep:].lstrip()
+                    part = dict(part)
+                    part["text"] = text
+                    remaining = max(0, remaining - len(text))
+                new_parts.append(part)
+            new = new_parts
+        else:
+            continue
+        _set_content(message, new)
+        after = message_chars(message)
+        if after != before:
+            changed += 1
+            saved += max(0, before - after)
+    return changed, saved
+
+
 COMPRESS_MARKER = "...[历史内容已压缩]..."
 
 
@@ -794,6 +889,7 @@ def clean_history(messages: Any, cfg: Any) -> tuple[list[dict], CleanStats]:
     dedupe_old(working, cfg, stats)
     if as_bool(get_cfg(cfg, "tools.cleanup_tools", False), False):
         clean_tools(working, cfg, stats)
+    strip_tool_image_artifacts(working)
     clean_images(working, cfg, stats)
     cap_current_tool_results(working, cfg, stats)
     clean_memory_blocks(working, cfg, stats)

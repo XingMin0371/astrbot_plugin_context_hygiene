@@ -60,6 +60,8 @@ try:
         flatten_config,
         get_cfg,
         message_chars,
+        strip_tool_image_artifacts,
+        truncate_oversized_messages,
     )
     from .tool_policy import clean_tool_definitions, gate_official_tools
 except ImportError:  # local/single-file import fallback
@@ -72,11 +74,13 @@ except ImportError:  # local/single-file import fallback
         flatten_config,
         get_cfg,
         message_chars,
+        strip_tool_image_artifacts,
+        truncate_oversized_messages,
     )
     from tool_policy import clean_tool_definitions, gate_official_tools  # type: ignore[no-redef]
 
 PLUGIN_NAME = "astrbot_plugin_context_hygiene"
-VERSION = "1.3.5"
+VERSION = "1.3.8"
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
 IMAGE_ARTIFACT_DIR_NAME = "image_artifacts"
 
@@ -97,6 +101,8 @@ class ContextHygiene(Star):
         self._last_admin_action: dict[str, float] = {}
         self._context_cache: dict[str, tuple[str, int, list[dict]]] = {}
         self._last_request_at: dict[str, float] = {}
+        self._message_seen_at: dict[str, dict[str, float]] = {}
+        self._tool_policy_done = False
         self._last_artifact_cleanup = 0.0
         self._turn_guard_state: dict[str, dict] = {}
 
@@ -682,7 +688,7 @@ class ContextHygiene(Star):
                 provider = self.context.get_using_provider()
         except Exception:
             return
-        tag_max = max(1, as_int(self._cfg("images.tag_max_chars", 4), 4))
+        tag_max = max(2, min(4, as_int(self._cfg("images.tag_max_chars", 4), 4)))
         desc_max = max(1, as_int(self._cfg("images.desc_max_chars", 15), 15))
         prompt = (
             "请用简短中文描述这张图片，供聊天机器人理解。"
@@ -902,6 +908,13 @@ class ContextHygiene(Star):
             return ""
         return "【历史摘要】\n" + " ".join(s for _idx, s in chosen) + "\n【历史摘要结束】"
 
+    def _is_cron_history_message(self, message: Any) -> bool:
+        return (
+            isinstance(message, dict)
+            and message.get("role") == "assistant"
+            and str(message.get("content", "")).lstrip().startswith("[CronJob]")
+        )
+
     def _trim_private_window(self, umo: str, contexts: list[dict], idle_due: bool) -> list[dict]:
         """Above the limit, after idle: replace middle with one protected summary block."""
         if "GroupMessage" in umo:
@@ -946,6 +959,46 @@ class ContextHygiene(Star):
         )
         return trimmed
 
+    def _message_key(self, message: dict) -> str:
+        payload = json.dumps(
+            {
+                "role": message.get("role"),
+                "content": message.get("content"),
+                "tool_calls": message.get("tool_calls"),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+        )
+        return hashlib.sha1(payload.encode("utf-8", "ignore")).hexdigest()
+
+    def _weak_middle_boundary(self, umo: str, contexts: list[dict], now: float) -> int:
+        """Return the end of the old middle that lost its per-message protection."""
+        prefix = max(0, as_int(self._cfg("compression.cache_prefix_messages", 24), 24))
+        keep_turns = max(1, as_int(self._cfg("basic.keep_recent_turns", self._cfg("keep_recent_turns", 12)), 12))
+        recent_start = max(prefix, len(contexts) - keep_turns * 2)
+        guard = max(0, as_int(self._cfg("cache_guard_minutes", 60), 60))
+        cutoff = now - guard * 60
+        seen = self._message_seen_at.setdefault(umo, {})
+        for idx, message in enumerate(contexts):
+            if not isinstance(message, dict):
+                continue
+            key = f"{idx}:{self._message_key(message)}"
+            if key not in seen:
+                # Unknown older messages are treated as historical; prefix/recent
+                # remain protected by the boundary below.
+                seen[key] = cutoff - 1 if prefix <= idx < recent_start else now
+        if len(seen) > 800:
+            for key in list(seen)[:len(seen) - 800]:
+                seen.pop(key, None)
+        boundary = prefix
+        while boundary < recent_start:
+            message = contexts[boundary]
+            if not isinstance(message, dict) or seen.get(f"{boundary}:{self._message_key(message)}", now) >= cutoff:
+                break
+            boundary += 1
+        return boundary
+
     @filter.on_llm_request()
     async def filter_request(self, event: AstrMessageEvent, req: ProviderRequest) -> None:
         """Clean only the request copy.  The stored conversation is untouched."""
@@ -954,16 +1007,30 @@ class ContextHygiene(Star):
         try:
             umo = str(getattr(event, "unified_msg_origin", "") or "")
             cron_payload = event.get_extra("cron_payload", {}) or {}
-            if isinstance(cron_payload, dict) and bool(cron_payload.get("isolate_context")):
-                # Isolated cron runs keep the delivery session but not its history.
-                req.contexts = []
-                logger.info("context_hygiene: cron context isolated | job=%s", cron_payload.get("name") or "")
+            is_cron = isinstance(cron_payload, dict) and bool(cron_payload)
+            raw_contexts = getattr(req, "contexts", None)
+            if is_cron and as_bool(self._cfg("cron_context.enabled", True), True):
+                carry = max(0, as_int(self._cfg("cron_context.carry_messages", 0), 0))
+                source = raw_contexts if isinstance(raw_contexts, list) else []
+                source = [m for m in source if not self._is_cron_history_message(m)]
+                req.contexts = source[-carry:] if carry > 0 else []
+                logger.info(
+                    "context_hygiene: cron context | job=%s | carry=%s | %s -> %s",
+                    cron_payload.get("name") or "",
+                    carry,
+                    len(raw_contexts) if isinstance(raw_contexts, list) else 0,
+                    len(req.contexts),
+                )
+            elif isinstance(raw_contexts, list):
+                # Old [CronJob] summaries must never pollute normal chats.
+                cleaned = [m for m in raw_contexts if not self._is_cron_history_message(m)]
+                if len(cleaned) != len(raw_contexts):
+                    req.contexts = cleaned
             await self._caption_current_images(req)
             now = time.time()
             previous_at = self._last_request_at.get(umo)
             idle_minutes = max(1, as_int(self._cfg("private_window.idle_minutes", self._cfg("private_idle_minutes", 10)), 10))
             idle_due = bool(previous_at and now - previous_at >= idle_minutes * 60)
-            active = self._cache_guard_active(umo, now)
             self._last_request_at[umo] = now
             if len(self._last_request_at) > 32:
                 self._last_request_at.pop(next(iter(self._last_request_at)))
@@ -973,6 +1040,17 @@ class ContextHygiene(Star):
                 return
             contexts = self._trim_private_window(umo, contexts, idle_due)
             req.contexts = contexts
+            img_changed, img_saved = strip_tool_image_artifacts(contexts)
+            over_changed, over_saved = truncate_oversized_messages(contexts, 10000)
+            if img_changed or over_changed:
+                req.contexts = contexts
+                logger.info(
+                    "context_hygiene: structural cleanup | images=%s/%s | oversized=%s/%s",
+                    img_changed, img_saved, over_changed, over_saved,
+                )
+            if not self._tool_policy_done:
+                self._apply_tool_policy(event, req)
+                self._tool_policy_done = True
             try:
                 tools = getattr(req, "func_tool", None) or []
                 tool_chars = len(json.dumps(tools, ensure_ascii=False, default=str))
@@ -988,28 +1066,24 @@ class ContextHygiene(Star):
                 )
             except Exception:
                 pass
-            hard_hit = self._hard_limit_hit(req, contexts)
-            if active and not hard_hit:
-                # Do not rewrite a warm prompt-cache prefix during an active
-                # conversation.  Cleanup runs once after the guard expires.
-                return
-            if active and hard_hit:
-                logger.warning(
-                    "context_hygiene: hard threshold reached, forcing cleanup despite cache guard"
-                )
             self._maybe_cleanup_backups()
-            self._apply_tool_policy(event, req)
-            cleaned, stats = self._clean_contexts_cached(umo, contexts)
-            if stats.changed:
-                req.contexts = cleaned
-                logger.info(
-                    "context_hygiene: request cleaned | chars %s -> %s | reminders %s | tool_msgs %s | images %s",
-                    stats.before_chars,
-                    stats.after_chars,
-                    stats.reminder_blocks_removed,
-                    stats.tool_messages_removed,
-                    stats.images_replaced,
-                )
+            weak_end = self._weak_middle_boundary(umo, contexts, now)
+            prefix_n = max(0, as_int(self._cfg("compression.cache_prefix_messages", 24), 24))
+            if weak_end > prefix_n:
+                cfg = self._clean_config()
+                compression = cfg.setdefault("compression", {})
+                compression["cache_prefix_messages"] = 0
+                compression["cache_friendly"] = False
+                cleaned, stats = clean_history(contexts[prefix_n:weak_end], cfg)
+                if stats.changed:
+                    req.contexts = contexts[:prefix_n] + cleaned + contexts[weak_end:]
+                    contexts = req.contexts
+                    logger.info(
+                        "context_hygiene: weak middle cleaned | chars %s -> %s | msgs %s -> %s | tools %s",
+                        stats.before_chars, stats.after_chars,
+                        stats.messages_before, stats.messages_after,
+                        stats.tool_messages_removed,
+                    )
         except Exception as exc:  # noqa: BLE001
             # Fail open: an error must never break the user's request.
             logger.warning("context_hygiene: request filter skipped (%s: %s)", type(exc).__name__, exc)
