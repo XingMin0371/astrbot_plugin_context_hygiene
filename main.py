@@ -97,7 +97,7 @@ except ImportError:  # local/single-file import fallback
     from tool_policy import clean_tool_definitions, gate_official_tools  # type: ignore[no-redef]
 
 PLUGIN_NAME = "astrbot_plugin_context_hygiene"
-VERSION = "1.8.6"
+VERSION = "1.8.7"
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
 IMAGE_ARTIFACT_DIR_NAME = "image_artifacts"
 
@@ -125,7 +125,8 @@ class ContextHygiene(Star):
         self._prefix_memory_cleaned = False
         self._structural_cache, self._prefix_structural_done = self._load_structural_cache()
         self._structural_dirty = False
-        self._compression_cache: dict[str, tuple[str, float, list[dict]]] = {}
+        self._compression_cache: dict[str, tuple[str, float, list[dict]]] = self._load_compression_cache()
+        self._compression_dirty = False
         self._last_artifact_cleanup = 0.0
         self._turn_guard_state: dict[str, dict] = {}
 
@@ -1070,6 +1071,50 @@ class ContextHygiene(Star):
             bucket_end += 1
         return bucket_end
 
+    COMPRESSION_CACHE_SECONDS = 1800
+    COMPRESSION_CACHE_MAX_ENTRIES = 8
+    COMPRESSION_CACHE_MAX_AGE = 7 * 86400
+
+    def _compression_cache_path(self) -> Path:
+        return Path(self._plugin_data_dir()) / "compression_cache.json"
+
+    def _load_compression_cache(self) -> dict[str, tuple[str, float, list[dict]]]:
+        try:
+            data = json.loads(self._compression_cache_path().read_text(encoding="utf-8"))
+            raw = data.get("entries", {}) if isinstance(data, dict) else {}
+            out = {}
+            cutoff = time.time() - self.COMPRESSION_CACHE_MAX_AGE
+            for umo, value in raw.items():
+                if not isinstance(value, list) or len(value) != 3:
+                    continue
+                key, ts, contexts = value
+                if isinstance(contexts, list) and float(ts) >= cutoff:
+                    out[str(umo)] = (str(key), float(ts), contexts)
+            return out
+        except Exception:
+            return {}
+
+    def _save_compression_cache(self) -> None:
+        try:
+            self._prune_compression_cache()
+            path = self._compression_cache_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {"entries": {umo: [v[0], v[1], v[2]] for umo, v in self._compression_cache.items()}}
+            path.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+            self._compression_dirty = False
+        except Exception as exc:
+            logger.debug("context_hygiene: compression cache save skipped (%s)", type(exc).__name__)
+
+    def _prune_compression_cache(self) -> None:
+        cutoff = time.time() - self.COMPRESSION_CACHE_MAX_AGE
+        for umo, value in list(self._compression_cache.items()):
+            if value[1] < cutoff:
+                self._compression_cache.pop(umo, None)
+        if len(self._compression_cache) > self.COMPRESSION_CACHE_MAX_ENTRIES:
+            oldest = sorted(self._compression_cache.items(), key=lambda kv: kv[1][1])
+            for umo, _ in oldest[: len(oldest) - self.COMPRESSION_CACHE_MAX_ENTRIES]:
+                self._compression_cache.pop(umo, None)
+
     def _structural_cache_path(self) -> Path:
         return Path(self._plugin_data_dir()) / "structural_cache.json"
 
@@ -1339,7 +1384,7 @@ class ContextHygiene(Star):
             compression_hit = bool(
                 cached_compression
                 and cached_compression[0] == compression_key
-                and now - cached_compression[1] < 300
+                and now - cached_compression[1] < self.COMPRESSION_CACHE_SECONDS
             )
             if compression_hit:
                 req.contexts = copy.deepcopy(cached_compression[2])
@@ -1430,8 +1475,8 @@ class ContextHygiene(Star):
                     )
             if not compression_hit:
                 self._compression_cache[umo] = (compression_key, now, copy.deepcopy(contexts))
-                if len(self._compression_cache) > 32:
-                    self._compression_cache.pop(next(iter(self._compression_cache)))
+                self._compression_dirty = True
+                self._save_compression_cache()
         except Exception as exc:  # noqa: BLE001
             # Fail open: an error must never break the user's request.
             logger.warning("context_hygiene: request filter skipped (%s: %s)", type(exc).__name__, exc)
