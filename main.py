@@ -66,6 +66,7 @@ try:
         is_placeholder_only,
         message_chars,
         normalize_message_lists,
+        replace_middle_think,
         strip_tool_image_artifacts,
         truncate_oversized_messages,
     )
@@ -85,13 +86,14 @@ except ImportError:  # local/single-file import fallback
         is_placeholder_only,
         message_chars,
         normalize_message_lists,
+        replace_middle_think,
         strip_tool_image_artifacts,
         truncate_oversized_messages,
     )
     from tool_policy import clean_tool_definitions, gate_official_tools  # type: ignore[no-redef]
 
 PLUGIN_NAME = "astrbot_plugin_context_hygiene"
-VERSION = "1.7.1"
+VERSION = "1.7.2"
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
 IMAGE_ARTIFACT_DIR_NAME = "image_artifacts"
 
@@ -1241,6 +1243,10 @@ class ContextHygiene(Star):
             gc_prefix = max(0, as_int(self._cfg("compression.cache_prefix_messages", 24), 24))
             gc_keep = max(1, as_int(self._cfg("basic.keep_recent_turns", 12), 12))
             if placeholder_due:
+                think_changed = replace_middle_think(contexts, self._clean_config())
+                if think_changed:
+                    req.contexts = contexts
+                    logger.info("context_hygiene: middle think replaced | msgs=%s", think_changed)
                 contexts = self._remove_placeholder_messages(
                     umo, contexts, now, gc_prefix, max(gc_prefix, len(contexts) - gc_keep * 2)
                 )

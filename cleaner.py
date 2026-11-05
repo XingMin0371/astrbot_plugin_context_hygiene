@@ -162,12 +162,14 @@ def text_of(message: Any) -> str:
     return str(content or "")
 
 
+THINK_PLACEHOLDER = "[推理已省略]"
 PLACEHOLDER_TEXTS = (
     "[图片已省略]",
     "[图片工具结果已省略]",
     "[内容过长已截断]",
     "[历史内容已压缩]",
     "[早期记忆块已省略]",
+    THINK_PLACEHOLDER,
 )
 _PLACEHOLDER_PREFIXES = ()
 
@@ -240,6 +242,39 @@ def is_placeholder_only(message: Any) -> bool:
     for prefix in _PLACEHOLDER_PREFIXES:
         remaining = re.sub(re.escape(prefix) + r"[^\]]*\]", "", remaining)
     return not remaining.strip()
+
+
+THINK_TYPES = {"think", "reasoning"}
+
+
+def replace_middle_think(messages: list[dict], cfg: Any) -> int:
+    """Remove old middle reasoning parts; prefix and recent turns stay intact."""
+    start = _cache_start(cfg)
+    keep_turns = max(1, as_int(get_cfg(cfg, "basic.keep_recent_turns", 12), 12))
+    cutoff = max(start, len(messages) - keep_turns * 2)
+    changed = 0
+    for i in range(start, cutoff):
+        message = messages[i]
+        if not isinstance(message, dict) or message.get("role") != "assistant":
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        if not any(isinstance(p, dict) and p.get("type") in THINK_TYPES for p in content):
+            continue
+        new_parts = [
+            p for p in content
+            if not (isinstance(p, dict) and p.get("type") in THINK_TYPES)
+        ]
+        if not any(
+            (isinstance(p, dict) and p.get("type") in TEXT_TYPES and str(p.get("text", "")).strip())
+            or (isinstance(p, dict) and p.get("type") not in TEXT_TYPES)
+            for p in new_parts
+        ):
+            new_parts = [{"type": "text", "text": THINK_PLACEHOLDER}]
+        _set_content(message, new_parts)
+        changed += 1
+    return changed
 
 
 def is_compressible_message(message: Any) -> bool:
