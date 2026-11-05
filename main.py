@@ -93,7 +93,7 @@ except ImportError:  # local/single-file import fallback
     from tool_policy import clean_tool_definitions, gate_official_tools  # type: ignore[no-redef]
 
 PLUGIN_NAME = "astrbot_plugin_context_hygiene"
-VERSION = "1.7.2"
+VERSION = "1.8.0"
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
 IMAGE_ARTIFACT_DIR_NAME = "image_artifacts"
 
@@ -119,7 +119,8 @@ class ContextHygiene(Star):
         self._tool_policy_done = False
         self._tool_policy_last_at = 0.0
         self._prefix_memory_cleaned = False
-        self._structural_cache: dict[str, tuple[float, dict]] = {}
+        self._structural_cache, self._prefix_structural_done = self._load_structural_cache()
+        self._structural_dirty = False
         self._compression_cache: dict[str, tuple[str, float, list[dict]]] = {}
         self._last_artifact_cleanup = 0.0
         self._turn_guard_state: dict[str, dict] = {}
@@ -1065,10 +1066,49 @@ class ContextHygiene(Star):
             bucket_end += 1
         return bucket_end
 
+    def _structural_cache_path(self) -> Path:
+        return Path(self._plugin_data_dir()) / "structural_cache.json"
+
+    def _load_structural_cache(self) -> tuple[dict[str, tuple[float, dict]], bool]:
+        try:
+            data = json.loads(self._structural_cache_path().read_text(encoding="utf-8"))
+            raw = data.get("entries", {}) if isinstance(data, dict) else {}
+            cache = {}
+            for key, value in raw.items():
+                if isinstance(value, list) and len(value) == 2 and isinstance(value[1], dict):
+                    cache[str(key)] = (float(value[0]), value[1])
+            return cache, bool(data.get("prefix_done", False)) if isinstance(data, dict) else False
+        except Exception:
+            return {}, False
+
+    def _save_structural_cache(self) -> None:
+        try:
+            path = self._structural_cache_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "prefix_done": self._prefix_structural_done,
+                "entries": {k: [v[0], v[1]] for k, v in self._structural_cache.items()},
+            }
+            path.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+            self._structural_dirty = False
+        except Exception as exc:
+            logger.debug("context_hygiene: structural cache save skipped (%s)", type(exc).__name__)
+
+    @staticmethod
+    def _hard_structural(message: dict) -> bool:
+        content = message.get("content")
+        text = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False, default=str)
+        return (
+            len(text) > 10000
+            or "[Image from tool" in text
+            or "base64," in text
+        )
+
     def _structural_clean(self, contexts: list[dict]) -> int:
         """Cache deterministic structural transforms by raw-message hash."""
         now = time.time()
         prefix = max(0, as_int(self._cfg("compression.cache_prefix_messages", 24), 24))
+        first_prefix = not self._prefix_structural_done
         config_key = hashlib.sha1(
             json.dumps(
                 {
@@ -1092,6 +1132,8 @@ class ContextHygiene(Star):
             if cached is not None:
                 contexts[idx] = copy.deepcopy(cached[1])
                 continue
+            if idx < prefix and not first_prefix and not self._hard_structural(message):
+                continue
             temp = [copy.deepcopy(message)]
             strip_tool_image_artifacts(temp)
             truncate_oversized_messages(temp, 10000)
@@ -1109,6 +1151,13 @@ class ContextHygiene(Star):
             oldest = sorted(self._structural_cache.items(), key=lambda kv: kv[1][0])[:100]
             for key, _ in oldest:
                 self._structural_cache.pop(key, None)
+        if first_prefix:
+            self._prefix_structural_done = True
+            self._structural_dirty = True
+        if changed or stale:
+            self._structural_dirty = True
+        if self._structural_dirty:
+            self._save_structural_cache()
         return changed
 
     def _compression_cache_key(self, contexts: list[dict]) -> str:

@@ -82,6 +82,12 @@
         "default": 3,
         "hint": "占位符消息超过该天数时清理整条消息；默认 3。"
       },
+      "think_batch_messages": {
+        "description": "单次 think 清理条数",
+        "type": "int",
+        "default": 20,
+        "hint": "每次维护窗口最多替换多少条中间旧 think；默认 20，剩余留到下一次窗口。"
+      },
       "keep_ratio": {
         "description": "旧文本保留比例",
         "hint": "压缩后旧文本保留比例；默认 0.333。",

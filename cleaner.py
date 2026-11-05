@@ -252,6 +252,7 @@ def replace_middle_think(messages: list[dict], cfg: Any) -> int:
     start = _cache_start(cfg)
     keep_turns = max(1, as_int(get_cfg(cfg, "basic.keep_recent_turns", 12), 12))
     cutoff = max(start, len(messages) - keep_turns * 2)
+    limit = max(1, as_int(get_cfg(cfg, "compression.think_batch_messages", 20), 20))
     changed = 0
     for i in range(start, cutoff):
         message = messages[i]
@@ -274,6 +275,8 @@ def replace_middle_think(messages: list[dict], cfg: Any) -> int:
             new_parts = [{"type": "text", "text": THINK_PLACEHOLDER}]
         _set_content(message, new_parts)
         changed += 1
+        if changed >= limit:
+            break
     return changed
 
 
