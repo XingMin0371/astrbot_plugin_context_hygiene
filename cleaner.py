@@ -938,8 +938,7 @@ def compress_old(messages: list[dict], cfg: Any, stats: CleanStats, before_chars
     keep_turns = max(0, as_int(get_cfg(cfg, "basic.keep_recent_turns", get_cfg(cfg, "keep_recent_turns", 12)), 12))
     cutoff = recent_user_start(messages, keep_turns)
     cache_friendly = as_bool(get_cfg(cfg, "compression.cache_friendly", True), True)
-    cache_prefix = max(0, as_int(get_cfg(cfg, "compression.cache_prefix_messages", 24), 24))
-    start = cache_prefix if cache_friendly else 0
+    start = _cache_start(cfg, messages) if cache_friendly else 0
     for i, message in enumerate(messages):
         if i < start or i >= cutoff or not isinstance(message, dict):
             continue
