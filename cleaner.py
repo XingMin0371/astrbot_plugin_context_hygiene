@@ -286,6 +286,8 @@ def is_compressible_message(message: Any) -> bool:
         return False
     if message.get("role") not in {"user", "assistant"} or message.get("tool_calls"):
         return False
+    if is_synthetic_message(message) or is_unknown_placeholder_message(message):
+        return False
     content = message.get("content")
     if isinstance(content, list):
         if any(
@@ -418,7 +420,9 @@ def recent_user_start(messages: list[dict], keep_turns: int) -> int:
         message = messages[idx]
         if not isinstance(message, dict):
             continue
-        if message.get("role") != "user" or message.get("_no_save"):
+        if message.get("role") != "user":
+            continue
+        if is_synthetic_message(message) or is_unknown_placeholder_message(message):
             continue
         seen += 1
         if seen >= keep_turns:
@@ -431,6 +435,27 @@ def _old_cutoff(messages: list[dict], cfg: Any) -> int:
     return recent_user_start(messages, keep_turns)
 
 
+SYNTHETIC_FLAGS = ("_no_save", "_synthetic", "synthetic", "is_system", "is_plugin")
+_PLACEHOLDER_ONLY_RE = re.compile(r"^(?:\s*(?:\[[^\]]*\]|<[^>]*>|【[^】]*】)\s*)+$")
+
+
+def is_synthetic_message(message: Any) -> bool:
+    if not isinstance(message, dict):
+        return False
+    if any(bool(message.get(k)) for k in SYNTHETIC_FLAGS):
+        return True
+    source = str(message.get("source") or message.get("origin") or "").strip().lower()
+    return source in {"plugin", "system", "synthetic"}
+
+
+def is_unknown_placeholder_message(message: Any) -> bool:
+    """Conservative: bracketed-only content is preserved and excluded from anchors."""
+    if not isinstance(message, dict) or message.get("role") not in {"user", "assistant"}:
+        return False
+    text = text_of(message).strip()
+    return bool(text) and bool(_PLACEHOLDER_ONLY_RE.match(text))
+
+
 def real_prefix_end(messages: list[dict], prefix_count: int) -> int:
     """Map N real messages to an index, ignoring synthetic _no_save injections."""
     prefix_count = max(0, int(prefix_count))
@@ -438,7 +463,9 @@ def real_prefix_end(messages: list[dict], prefix_count: int) -> int:
         return 0
     seen = 0
     for idx, message in enumerate(messages):
-        if not isinstance(message, dict) or message.get("_no_save"):
+        if (not isinstance(message, dict)
+                or is_synthetic_message(message)
+                or is_unknown_placeholder_message(message)):
             continue
         seen += 1
         if seen >= prefix_count:
