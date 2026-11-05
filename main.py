@@ -76,7 +76,7 @@ except ImportError:  # local/single-file import fallback
     from tool_policy import clean_tool_definitions, gate_official_tools  # type: ignore[no-redef]
 
 PLUGIN_NAME = "astrbot_plugin_context_hygiene"
-VERSION = "1.3.4"
+VERSION = "1.3.5"
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
 IMAGE_ARTIFACT_DIR_NAME = "image_artifacts"
 
@@ -953,6 +953,11 @@ class ContextHygiene(Star):
             return
         try:
             umo = str(getattr(event, "unified_msg_origin", "") or "")
+            cron_payload = event.get_extra("cron_payload", {}) or {}
+            if isinstance(cron_payload, dict) and bool(cron_payload.get("isolate_context")):
+                # Isolated cron runs keep the delivery session but not its history.
+                req.contexts = []
+                logger.info("context_hygiene: cron context isolated | job=%s", cron_payload.get("name") or "")
             await self._caption_current_images(req)
             now = time.time()
             previous_at = self._last_request_at.get(umo)
