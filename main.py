@@ -66,6 +66,7 @@ try:
         is_placeholder_only,
         message_chars,
         normalize_message_lists,
+        real_prefix_end,
         recent_user_start,
         replace_middle_think,
         strip_tool_image_artifacts,
@@ -87,6 +88,7 @@ except ImportError:  # local/single-file import fallback
         is_placeholder_only,
         message_chars,
         normalize_message_lists,
+        real_prefix_end,
         recent_user_start,
         replace_middle_think,
         strip_tool_image_artifacts,
@@ -95,7 +97,7 @@ except ImportError:  # local/single-file import fallback
     from tool_policy import clean_tool_definitions, gate_official_tools  # type: ignore[no-redef]
 
 PLUGIN_NAME = "astrbot_plugin_context_hygiene"
-VERSION = "1.8.2"
+VERSION = "1.8.3"
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
 IMAGE_ARTIFACT_DIR_NAME = "image_artifacts"
 
@@ -972,7 +974,7 @@ class ContextHygiene(Star):
         if len(contexts) <= limit or not idle_due:
             return contexts
         target = max(20, as_int(self._cfg("private_window.trim_target", self._cfg("private_trim_target", 72)), 72))
-        prefix_n = max(0, as_int(self._cfg("compression.cache_prefix_messages", 24), 24))
+        prefix_n = real_prefix_end(contexts, max(0, as_int(self._cfg("compression.cache_prefix_messages", 24), 24)))
         keep_turns = max(1, as_int(self._cfg("basic.keep_recent_turns", self._cfg("keep_recent_turns", 12)), 12))
         recent_n = max(0, keep_turns * 2)
         # The target must leave room for prefix + summary + at least one recent pair.
@@ -1022,7 +1024,7 @@ class ContextHygiene(Star):
     def _weak_middle_boundary(self, umo: str, contexts: list[dict], now: float,
                               guard_minutes: int | None = None, force: bool = False) -> int:
         """Return the end of the old middle that lost its per-message protection."""
-        prefix = max(0, as_int(self._cfg("compression.cache_prefix_messages", 24), 24))
+        prefix = real_prefix_end(contexts, max(0, as_int(self._cfg("compression.cache_prefix_messages", 24), 24)))
         keep_turns = max(1, as_int(self._cfg("basic.keep_recent_turns", self._cfg("keep_recent_turns", 12)), 12))
         recent_start = max(prefix, recent_user_start(contexts, keep_turns))
         guard = max(0, as_int(
@@ -1109,7 +1111,7 @@ class ContextHygiene(Star):
     def _structural_clean(self, contexts: list[dict]) -> int:
         """Cache deterministic structural transforms by raw-message hash."""
         now = time.time()
-        prefix = max(0, as_int(self._cfg("compression.cache_prefix_messages", 24), 24))
+        prefix = real_prefix_end(contexts, max(0, as_int(self._cfg("compression.cache_prefix_messages", 24), 24)))
         keep_turns = max(1, as_int(self._cfg("basic.keep_recent_turns", 12), 12))
         recent_start = recent_user_start(contexts, keep_turns)
         first_prefix = not self._prefix_structural_done
@@ -1295,7 +1297,7 @@ class ContextHygiene(Star):
                     req.contexts = contexts
                     logger.info("context_hygiene: one-time prefix memory cleanup | blocks=%s",
                                 once_stats.memory_blocks_removed)
-            gc_prefix = max(0, as_int(self._cfg("compression.cache_prefix_messages", 24), 24))
+            gc_prefix = real_prefix_end(contexts, max(0, as_int(self._cfg("compression.cache_prefix_messages", 24), 24)))
             gc_keep = max(1, as_int(self._cfg("basic.keep_recent_turns", 12), 12))
             if placeholder_due:
                 think_changed = replace_middle_think(contexts, self._clean_config())
@@ -1343,7 +1345,7 @@ class ContextHygiene(Star):
                 req.contexts = copy.deepcopy(cached_compression[2])
                 contexts = req.contexts
             keep_turns = max(1, as_int(self._cfg("basic.keep_recent_turns", 12), 12))
-            normal_prefix = max(0, as_int(self._cfg("compression.cache_prefix_messages", 24), 24))
+            normal_prefix = real_prefix_end(contexts, max(0, as_int(self._cfg("compression.cache_prefix_messages", 24), 24)))
             protected_start = max(normal_prefix, recent_user_start(contexts, keep_turns))
             candidate = contexts[normal_prefix:protected_start]
             compress_allowed = not compression_hit and maintenance_due
@@ -1379,7 +1381,7 @@ class ContextHygiene(Star):
                         stats.before_chars, stats.after_chars,
                         stats.messages_before, stats.messages_after,
                     )
-            prefix_n = max(0, as_int(self._cfg("compression.cache_prefix_messages", 24), 24))
+            prefix_n = real_prefix_end(contexts, max(0, as_int(self._cfg("compression.cache_prefix_messages", 24), 24)))
             weak_end = self._weak_middle_boundary(umo, contexts, now)
             cfg = self._weak_clean_config()
             middle = contexts[prefix_n:max(prefix_n, protected_start)]

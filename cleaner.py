@@ -249,7 +249,7 @@ THINK_TYPES = {"think", "reasoning"}
 
 def replace_middle_think(messages: list[dict], cfg: Any) -> int:
     """Remove old middle reasoning parts; prefix and recent turns stay intact."""
-    start = _cache_start(cfg)
+    start = _cache_start(cfg, messages)
     keep_turns = max(1, as_int(get_cfg(cfg, "basic.keep_recent_turns", 12), 12))
     cutoff = max(start, recent_user_start(messages, keep_turns))
     limit = max(1, as_int(get_cfg(cfg, "compression.think_batch_messages", 20), 20))
@@ -378,7 +378,7 @@ def clean_reminders(messages: list[dict], cfg: Any, stats: CleanStats) -> None:
         if isinstance(message, dict) and message.get("role") == "user":
             last_user = i
 
-    start = _cache_start(cfg)
+    start = _cache_start(cfg, messages)
     for i, message in enumerate(messages):
         if i < start:
             continue
@@ -431,11 +431,29 @@ def _old_cutoff(messages: list[dict], cfg: Any) -> int:
     return recent_user_start(messages, keep_turns)
 
 
-def _cache_start(cfg: Any) -> int:
+def real_prefix_end(messages: list[dict], prefix_count: int) -> int:
+    """Map N real messages to an index, ignoring synthetic _no_save injections."""
+    prefix_count = max(0, int(prefix_count))
+    if prefix_count <= 0:
+        return 0
+    seen = 0
+    for idx, message in enumerate(messages):
+        if not isinstance(message, dict) or message.get("_no_save"):
+            continue
+        seen += 1
+        if seen >= prefix_count:
+            return idx + 1
+    return len(messages)
+
+
+def _cache_start(cfg: Any, messages: list[dict] | None = None) -> int:
     """First index that may be rewritten when cache-friendly mode is on."""
     if not as_bool(get_cfg(cfg, "compression.cache_friendly", True), True):
         return 0
-    return max(0, as_int(get_cfg(cfg, "compression.cache_prefix_messages", 24), 24))
+    prefix_count = max(0, as_int(get_cfg(cfg, "compression.cache_prefix_messages", 24), 24))
+    if messages is None:
+        return prefix_count
+    return real_prefix_end(messages, prefix_count)
 
 
 def dedupe_old(messages: list[dict], cfg: Any, stats: CleanStats) -> None:
@@ -448,7 +466,7 @@ def dedupe_old(messages: list[dict], cfg: Any, stats: CleanStats) -> None:
     cutoff = _old_cutoff(messages, cfg)
     if cutoff <= 1:
         return
-    start = _cache_start(cfg)
+    start = _cache_start(cfg, messages)
 
     # User messages: keep the latest occurrence, remove earlier exact copies.
     last_user: dict[str, int] = {}
@@ -651,7 +669,7 @@ def clean_tools(messages: list[dict], cfg: Any, stats: CleanStats,
     expired_ids = {cid for _, cid, old, _ in calls if old}
     ttl_batch_ok = not cutoff or len(expired_ids) > ttl_min_count
 
-    start = _cache_start(cfg)
+    start = _cache_start(cfg, messages)
     recent_ids = {cid for _, cid, _, _ in calls[-keep_recent:]}
     keep_ids = set(recent_ids)
     if not ttl_batch_ok:
@@ -748,7 +766,7 @@ def clean_images(messages: list[dict], cfg: Any, stats: CleanStats) -> None:
         return
     keep_turns = max(0, as_int(get_cfg(cfg, "basic.keep_recent_turns", get_cfg(cfg, "keep_recent_turns", 12)), 12))
     cutoff = recent_user_start(messages, keep_turns)
-    start = _cache_start(cfg)
+    start = _cache_start(cfg, messages)
     placeholder = str(get_cfg(cfg, "images.placeholder", "[图片已省略]"))
     keep_labels = as_bool(get_cfg(cfg, "images.keep_labels", True), True)
     only_base64 = as_bool(get_cfg(cfg, "images.only_base64", True), True)
@@ -1014,7 +1032,7 @@ def clean_memory_blocks(messages: list[dict], cfg: Any, stats: CleanStats,
     """Keep the newest memory injections and protect blocks younger than min_age."""
     if not as_bool(get_cfg(cfg, "memory_blocks.enabled", True), True):
         return
-    start = _cache_start(cfg) if protect_prefix else 0
+    start = _cache_start(cfg, messages) if protect_prefix else 0
     keep = max(0, as_int(get_cfg(cfg, "memory_blocks.keep_latest", 5), 5))
     try:
         min_age_hours = max(0.0, float(get_cfg(cfg, "memory_blocks.min_age_hours", 12) or 12))
