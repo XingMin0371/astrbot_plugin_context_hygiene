@@ -251,7 +251,7 @@ def replace_middle_think(messages: list[dict], cfg: Any) -> int:
     """Remove old middle reasoning parts; prefix and recent turns stay intact."""
     start = _cache_start(cfg)
     keep_turns = max(1, as_int(get_cfg(cfg, "basic.keep_recent_turns", 12), 12))
-    cutoff = max(start, len(messages) - keep_turns * 2)
+    cutoff = max(start, recent_user_start(messages, keep_turns))
     limit = max(1, as_int(get_cfg(cfg, "compression.think_batch_messages", 20), 20))
     changed = 0
     for i in range(start, cutoff):
@@ -408,9 +408,27 @@ def clean_reminders(messages: list[dict], cfg: Any, stats: CleanStats) -> None:
                 _set_content(message, kept)
 
 
+def recent_user_start(messages: list[dict], keep_turns: int) -> int:
+    """Protect the last N real user turns, regardless of tool/think message count."""
+    keep_turns = max(0, int(keep_turns))
+    if keep_turns <= 0:
+        return len(messages)
+    seen = 0
+    for idx in range(len(messages) - 1, -1, -1):
+        message = messages[idx]
+        if not isinstance(message, dict):
+            continue
+        if message.get("role") != "user" or message.get("_no_save"):
+            continue
+        seen += 1
+        if seen >= keep_turns:
+            return idx
+    return 0
+
+
 def _old_cutoff(messages: list[dict], cfg: Any) -> int:
     keep_turns = max(0, as_int(get_cfg(cfg, "basic.keep_recent_turns", get_cfg(cfg, "keep_recent_turns", 12)), 12))
-    return max(0, len(messages) - keep_turns * 2)
+    return recent_user_start(messages, keep_turns)
 
 
 def _cache_start(cfg: Any) -> int:
@@ -615,7 +633,7 @@ def clean_tools(messages: list[dict], cfg: Any, stats: CleanStats,
     # Only clean tool traffic older than this many turns; keep recent turns
     # byte-stable so the prompt cache prefix is not disturbed.
     tool_keep_turns = max(1, as_int(get_cfg(cfg, "tools.keep_recent_turns", 30), 30))
-    tool_recent_cutoff = max(0, len(messages) - tool_keep_turns * 2)
+    tool_recent_cutoff = recent_user_start(messages, tool_keep_turns)
     cutoff = bucket_ts - ttl_minutes * 60 if ttl_minutes else None
 
     calls: list[tuple[int, str, bool, bool]] = []
@@ -729,7 +747,7 @@ def clean_images(messages: list[dict], cfg: Any, stats: CleanStats) -> None:
     if not as_bool(get_cfg(cfg, "images.clean_old", True), True):
         return
     keep_turns = max(0, as_int(get_cfg(cfg, "basic.keep_recent_turns", get_cfg(cfg, "keep_recent_turns", 12)), 12))
-    cutoff = max(0, len(messages) - keep_turns * 2)
+    cutoff = recent_user_start(messages, keep_turns)
     start = _cache_start(cfg)
     placeholder = str(get_cfg(cfg, "images.placeholder", "[图片已省略]"))
     keep_labels = as_bool(get_cfg(cfg, "images.keep_labels", True), True)
@@ -900,7 +918,7 @@ def compress_old(messages: list[dict], cfg: Any, stats: CleanStats, before_chars
         return
     ratio = max(0.05, min(0.9, as_float(get_cfg(cfg, "compression.keep_ratio", 0.333), 0.333)))
     keep_turns = max(0, as_int(get_cfg(cfg, "basic.keep_recent_turns", get_cfg(cfg, "keep_recent_turns", 12)), 12))
-    cutoff = max(0, len(messages) - keep_turns * 2)
+    cutoff = recent_user_start(messages, keep_turns)
     cache_friendly = as_bool(get_cfg(cfg, "compression.cache_friendly", True), True)
     cache_prefix = max(0, as_int(get_cfg(cfg, "compression.cache_prefix_messages", 24), 24))
     start = cache_prefix if cache_friendly else 0
