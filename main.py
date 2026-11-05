@@ -89,7 +89,7 @@ except ImportError:  # local/single-file import fallback
     from tool_policy import clean_tool_definitions, gate_official_tools  # type: ignore[no-redef]
 
 PLUGIN_NAME = "astrbot_plugin_context_hygiene"
-VERSION = "1.6.1"
+VERSION = "1.7.0"
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
 IMAGE_ARTIFACT_DIR_NAME = "image_artifacts"
 
@@ -1204,12 +1204,11 @@ class ContextHygiene(Star):
             previous_at = self._last_request_at.get(umo)
             idle_minutes = max(1, as_int(self._cfg("private_window.idle_minutes", self._cfg("private_idle_minutes", 10)), 10))
             idle_due = bool(previous_at and now - previous_at >= idle_minutes * 60)
-            placeholder_idle = max(1, as_int(self._cfg("compression.placeholder_idle_minutes", 10), 10))
-            placeholder_due = bool(previous_at and now - previous_at >= placeholder_idle * 60)
-            weak_idle = max(1, as_int(self._cfg("compression.weak_idle_minutes", 10), 10))
-            weak_idle_due = bool(previous_at and now - previous_at >= weak_idle * 60)
-            ttl_idle = max(1, as_int(self._cfg("tools.ttl_idle_minutes", 10), 10))
-            ttl_idle_due = bool(not previous_at or now - previous_at >= ttl_idle * 60)
+            maintenance_idle = max(1, as_int(self._cfg("basic.maintenance_idle_minutes", 10), 10))
+            maintenance_due = bool(not previous_at or now - previous_at >= maintenance_idle * 60)
+            placeholder_due = maintenance_due
+            weak_idle_due = maintenance_due
+            ttl_idle_due = maintenance_due
             self._last_request_at[umo] = now
             if len(self._last_request_at) > 32:
                 self._last_request_at.pop(next(iter(self._last_request_at)))
@@ -1277,11 +1276,7 @@ class ContextHygiene(Star):
             recent_n = keep_turns * 2
             normal_prefix = max(0, as_int(self._cfg("compression.cache_prefix_messages", 24), 24))
             candidate = contexts[normal_prefix:-recent_n] if len(contexts) > recent_n + normal_prefix else []
-            cooldown_minutes = max(0, as_int(self._cfg("compression.cooldown_minutes", 10), 10))
-            compress_allowed = (
-                not compression_hit
-                and now - self._compress_last_at.get(umo, 0) >= cooldown_minutes * 60
-            )
+            compress_allowed = not compression_hit and maintenance_due
             normal_cfg = self._clean_config()
             compressible = sum(
                 message_chars(m) for m in candidate if is_compressible_message(m)

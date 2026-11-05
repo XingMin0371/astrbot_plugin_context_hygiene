@@ -112,6 +112,7 @@ threshold_chars: 72000
 threshold_tokens: 39600
 keep_recent_turns: 12
 cache_guard_minutes: 25
+maintenance_idle_minutes: 10
 batch_cleanup_messages: 8
 
 auto_threshold: false
@@ -203,11 +204,8 @@ compression:
   keep_ratio: 0.333
   min_chars: 12000
   cache_prefix_messages: 24
-  cooldown_minutes: 10
   placeholder_max_messages: 30
   placeholder_max_days: 3
-  placeholder_idle_minutes: 10
-  weak_idle_minutes: 10
 
 weak_compression:
   threshold_chars: 36000
@@ -265,7 +263,7 @@ tool result
 
 默认保留最近 3 对，删除更早的完整对和孤立 `tool` 消息。
 
-`ttl_minutes: 20` 只在空闲 `ttl_idle_minutes: 10` 后执行；按 `ttl_bucket_minutes: 15` 取整，过期调用超过 `ttl_min_count: 6` 条才一次性删除。没有时间戳时用首次 seen 时间兜底。
+`ttl_minutes: 20` 只在统一维护窗口（`maintenance_idle_minutes: 10`）执行；按 15 分钟内部取整，过期调用超过 `ttl_min_count: 6` 条才一次性删除。没有时间戳时用首次 seen 时间兜底。
 
 超长工具结果默认不压缩；开启后只做确定性截断。
 

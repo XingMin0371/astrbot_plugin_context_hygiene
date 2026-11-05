@@ -34,6 +34,12 @@
         "type": "int",
         "default": 25
       },
+      "maintenance_idle_minutes": {
+        "description": "统一维护空闲分钟",
+        "type": "int",
+        "default": 10,
+        "hint": "所有可延迟清理（压缩/占位符/TTL）只在空闲达到该分钟数后统一执行；默认 10，推荐 5–15。"
+      },
       "batch_cleanup_messages": {
         "description": "批量清理消息数",
         "type": "int",
@@ -64,18 +70,6 @@
         "type": "bool",
         "default": true
       },
-      "cooldown_minutes": {
-        "description": "压缩冷却（分钟）",
-        "type": "int",
-        "default": 10,
-        "hint": "正常/弱段压缩成功后，多少分钟内不再压缩；默认 10，推荐 5–15。"
-      },
-      "weak_idle_minutes": {
-        "description": "弱段压缩空闲分钟",
-        "type": "int",
-        "default": 10,
-        "hint": "非强制弱段压缩只在空闲达到该分钟数后执行；默认 10，推荐 5–15。"
-      },
       "placeholder_max_messages": {
         "description": "占位符批量清理条数",
         "type": "int",
@@ -87,12 +81,6 @@
         "type": "int",
         "default": 3,
         "hint": "占位符消息超过该天数时清理整条消息；默认 3。"
-      },
-      "placeholder_idle_minutes": {
-        "description": "占位符清理空闲分钟",
-        "type": "int",
-        "default": 10,
-        "hint": "距离上次请求达到该分钟数才执行占位符清理；默认 10，推荐 5–15。"
       },
       "keep_ratio": {
         "description": "旧文本保留比例",
@@ -326,23 +314,11 @@
         "type": "int",
         "default": 20
       },
-      "ttl_idle_minutes": {
-        "description": "工具 TTL 空闲分钟",
-        "type": "int",
-        "default": 10,
-        "hint": "连续聊天时不按 TTL 清理；空闲达到该分钟数才执行，默认 10，推荐 5–15。"
-      },
       "ttl_min_count": {
         "description": "工具 TTL 最小条数",
         "type": "int",
         "default": 6,
         "hint": "过期工具调用超过该条数才一次性清理；默认 6，即超过 6 条才处理。"
-      },
-      "ttl_bucket_minutes": {
-        "description": "工具 TTL 时间桶",
-        "type": "int",
-        "default": 15,
-        "hint": "TTL 按该分钟数取整，避免同一批工具逐条消失；默认 15，推荐 10–20。"
       },
       "keep_recent_pairs": {
         "description": "保留最近工具调用对数",
