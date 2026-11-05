@@ -95,59 +95,52 @@
         "default": 0.333
       },
       "min_chars": {
-        "description": "最小压缩长度",
+        "description": "正常压缩最小字符",
         "type": "int",
         "default": 12000,
-        "hint": "按 72 条窗口推荐：24条→4,000；48条→8,000；72条→12,000；90条→15,000；极限→20,000。"
+        "hint": "正常压缩触发后，可压缩内容低于该值不压缩；默认 12,000。"
+      },
+      "weak_threshold_chars": {
+        "description": "过期段压缩触发字符数",
+        "type": "int",
+        "default": 36000,
+        "hint": "只作用于中间弱保护段；达到后按弱段阈值压缩。"
+      },
+      "weak_threshold_tokens": {
+        "description": "过期段压缩触发 Token",
+        "type": "int",
+        "default": 19800,
+        "hint": "只作用于中间弱保护段；达到后按弱段阈值压缩。"
+      },
+      "weak_force_chars": {
+        "description": "过期段强制压缩字符数",
+        "type": "int",
+        "default": 60000,
+        "hint": "中间弱段超过该字符数时，缓存保护时间减半后强制压缩；前缀和最近轮仍受保护。"
+      },
+      "weak_force_tokens": {
+        "description": "过期段强制压缩 Token",
+        "type": "int",
+        "default": 33000,
+        "hint": "中间弱段超过该 Token 数时，缓存保护时间减半后强制压缩；前缀和最近轮仍受保护。"
+      },
+      "weak_min_chars": {
+        "description": "过期段最小压缩字符",
+        "type": "int",
+        "default": 8000,
+        "hint": "中间弱段低于该字符数不压缩；默认 8000。"
       },
       "cache_friendly": {
-        "description": "保留前缀以利用 Prompt Cache",
-        "hint": "开启后最前面的消息不参与压缩/去重/图片替换/工具裁剪，减少缓存前缀变化。",
+        "description": "启用前缀保护",
+        "hint": "开启后前缀真实消息不参与压缩/去重/图片替换/工具裁剪；关闭后前缀消息数不生效。",
         "type": "bool",
         "default": true
       },
       "cache_prefix_messages": {
-        "description": "前缀消息数",
-        "hint": "正常压缩完整保护此前缀；弱段也保护完整前缀，默认 24。",
+        "description": "前缀真实消息数",
+        "hint": "正常压缩和弱段都保护该数量的真实消息；_no_save 注入不计入。默认 24。",
         "type": "int",
         "default": 24
-      }
-    }
-  },
-  "weak_compression": {
-    "description": "过期段压缩阈值",
-    "type": "object",
-    "hint": "只作用于中间弱保护段；建议均设为正常阈值的一半。",
-    "items": {
-      "threshold_chars": {
-        "description": "过期段压缩触发字符数",
-        "type": "int",
-        "default": 36000,
-        "hint": "建议为正常阈值的一半。"
-      },
-      "threshold_tokens": {
-        "description": "过期段压缩触发 Token",
-        "type": "int",
-        "default": 19800,
-        "hint": "建议为正常阈值的一半。"
-      },
-      "hard_threshold_chars": {
-        "description": "过期段强制压缩字符数",
-        "type": "int",
-        "default": 60000,
-        "hint": "中间弱保护段超过该字符数时，缓存保护时间减半后强制压缩中间段；前缀和最近轮仍受保护。"
-      },
-      "hard_threshold_tokens": {
-        "description": "过期段强制压缩 Token",
-        "type": "int",
-        "default": 33000,
-        "hint": "中间弱保护段超过该 Token 数时，缓存保护时间减半后强制压缩中间段；前缀和最近轮仍受保护。"
-      },
-      "min_chars": {
-        "description": "过期段最小压缩字符",
-        "type": "int",
-        "default": 8000,
-        "hint": "建议为正常最小压缩字符的一半；默认 8000。"
       }
     }
   },

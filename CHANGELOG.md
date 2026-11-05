@@ -1,7 +1,13 @@
 # CHANGELOG
 
-当前版本：**v1.8.8**
+当前版本：**v1.8.9**
 
+
+## v1.8.9 — 2026-11-05
+
+- 展平过期段压缩设置，移除 weak_compression 嵌套和 hard_threshold 英文键。
+- 使用 weak_threshold/weak_force/weak_min 中文明确字段。
+- 修正最小压缩、前缀保护的过时描述。
 
 ## v1.8.8 — 2026-11-05
 

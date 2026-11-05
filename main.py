@@ -97,7 +97,7 @@ except ImportError:  # local/single-file import fallback
     from tool_policy import clean_tool_definitions, gate_official_tools  # type: ignore[no-redef]
 
 PLUGIN_NAME = "astrbot_plugin_context_hygiene"
-VERSION = "1.8.8"
+VERSION = "1.8.9"
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
 IMAGE_ARTIFACT_DIR_NAME = "image_artifacts"
 
@@ -468,27 +468,31 @@ class ContextHygiene(Star):
 
     def _weak_clean_config(self) -> dict:
         cfg = self._clean_config()
-        normal_chars = as_int(cfg.get("threshold_chars", 72000), 72000)
-        normal_tokens = as_int(cfg.get("threshold_tokens", 39600), 39600)
         compression = cfg.setdefault("compression", {})
         compression["hard_threshold_chars"] = as_int(
-            self._cfg("weak_compression.hard_threshold_chars", normal_chars // 2),
-            normal_chars // 2,
+            self._cfg("compression.weak_force_chars",
+                      self._cfg("weak_compression.hard_threshold_chars", 60000)),
+            60000,
         )
         compression["hard_threshold_tokens"] = as_int(
-            self._cfg("weak_compression.hard_threshold_tokens", normal_tokens // 2),
-            normal_tokens // 2,
+            self._cfg("compression.weak_force_tokens",
+                      self._cfg("weak_compression.hard_threshold_tokens", 33000)),
+            33000,
         )
         compression["min_chars"] = as_int(
-            self._cfg("weak_compression.min_chars", 8000), 8000
+            self._cfg("compression.weak_min_chars",
+                      self._cfg("weak_compression.min_chars", 8000)),
+            8000,
         )
         cfg["threshold_chars"] = as_int(
-            self._cfg("weak_compression.threshold_chars", normal_chars // 2),
-            normal_chars // 2,
+            self._cfg("compression.weak_threshold_chars",
+                      self._cfg("weak_compression.threshold_chars", 36000)),
+            36000,
         )
         cfg["threshold_tokens"] = as_int(
-            self._cfg("weak_compression.threshold_tokens", normal_tokens // 2),
-            normal_tokens // 2,
+            self._cfg("compression.weak_threshold_tokens",
+                      self._cfg("weak_compression.threshold_tokens", 19800)),
+            19800,
         )
         return cfg
 
@@ -1220,7 +1224,7 @@ class ContextHygiene(Star):
                 "threshold_chars": self._cfg("basic.threshold_chars", 72000),
                 "threshold_tokens": self._cfg("basic.threshold_tokens", 39600),
                 "keep_recent_turns": self._cfg("basic.keep_recent_turns", 12),
-                "weak": self._cfg("weak_compression", {}),
+                "weak": self._cfg("compression", {}),
                 "tools": self._cfg("tools", {}),
             },
         }
@@ -1434,8 +1438,8 @@ class ContextHygiene(Star):
                 message_chars(m) for m in middle if is_compressible_message(m)
             )
             weak_hard_hit = (
-                weak_chars >= as_int(self._cfg("weak_compression.hard_threshold_chars", 60000), 60000)
-                or estimate_tokens(weak_chars) >= as_int(self._cfg("weak_compression.hard_threshold_tokens", 33000), 33000)
+                weak_chars >= as_int(self._cfg("compression.weak_force_chars", 60000), 60000)
+                or estimate_tokens(weak_chars) >= as_int(self._cfg("compression.weak_force_tokens", 33000), 33000)
             )
             if weak_hard_hit:
                 # Hard weak fallback: halve the age guard, still keep prefix/recent.
