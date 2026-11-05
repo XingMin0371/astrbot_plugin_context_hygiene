@@ -204,7 +204,7 @@ compression:
   keep_ratio: 0.333
   min_chars: 12000
   cache_prefix_messages: 24
-  placeholder_max_messages: 30
+  placeholder_max_messages: 40
   placeholder_max_days: 3
 
 weak_compression:
