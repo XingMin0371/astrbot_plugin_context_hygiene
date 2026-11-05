@@ -58,6 +58,7 @@ try:
         as_int,
         clean_history,
         clean_memory_blocks,
+        clean_tools,
         estimate_tokens,
         flatten_config,
         get_cfg,
@@ -76,6 +77,7 @@ except ImportError:  # local/single-file import fallback
         as_int,
         clean_history,
         clean_memory_blocks,
+        clean_tools,
         estimate_tokens,
         flatten_config,
         get_cfg,
@@ -89,7 +91,7 @@ except ImportError:  # local/single-file import fallback
     from tool_policy import clean_tool_definitions, gate_official_tools  # type: ignore[no-redef]
 
 PLUGIN_NAME = "astrbot_plugin_context_hygiene"
-VERSION = "1.7.0"
+VERSION = "1.7.1"
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
 IMAGE_ARTIFACT_DIR_NAME = "image_artifacts"
 
@@ -111,7 +113,7 @@ class ContextHygiene(Star):
         self._context_cache: dict[str, tuple[str, int, list[dict]]] = {}
         self._last_request_at: dict[str, float] = {}
         self._message_seen_at: dict[str, dict[str, float]] = {}
-        self._compress_last_at: dict[str, float] = {}
+        self._last_maintenance_at: dict[str, float] = {}
         self._tool_policy_done = False
         self._tool_policy_last_at = 0.0
         self._prefix_memory_cleaned = False
@@ -1205,10 +1207,16 @@ class ContextHygiene(Star):
             idle_minutes = max(1, as_int(self._cfg("private_window.idle_minutes", self._cfg("private_idle_minutes", 10)), 10))
             idle_due = bool(previous_at and now - previous_at >= idle_minutes * 60)
             maintenance_idle = max(1, as_int(self._cfg("basic.maintenance_idle_minutes", 10), 10))
-            maintenance_due = bool(not previous_at or now - previous_at >= maintenance_idle * 60)
+            max_interval = 60
+            maintenance_due = bool(
+                not previous_at
+                or now - previous_at >= maintenance_idle * 60
+                or now - self._last_maintenance_at.get(umo, 0) >= max_interval * 60
+            )
+            if maintenance_due:
+                self._last_maintenance_at[umo] = now
             placeholder_due = maintenance_due
-            weak_idle_due = maintenance_due
-            ttl_idle_due = maintenance_due
+            allow_ttl_cleanup = maintenance_due
             self._last_request_at[umo] = now
             if len(self._last_request_at) > 32:
                 self._last_request_at.pop(next(iter(self._last_request_at)))
@@ -1286,25 +1294,26 @@ class ContextHygiene(Star):
                 or estimate_tokens(compressible) > as_int(normal_cfg.get("threshold_tokens", 39600), 39600)
             )
             normal_done = False
+            tools_cleaned = False
             if compress_allowed and candidate and normal_hit:
                 normal_cfg.setdefault("compression", {})["cache_prefix_messages"] = 0
                 normal_cfg["compression"]["cache_friendly"] = False
                 normal_cfg.setdefault("basic", {})["keep_recent_turns"] = 0
                 normal_cfg["keep_recent_turns"] = 0
-                normal_cfg.setdefault("tools", {})["ttl_idle_due"] = ttl_idle_due
                 for item in candidate:
                     if isinstance(item, dict) and item.get("role") == "tool":
                         normalize_message_lists([item])
                 cleaned, stats = clean_history(
-                    candidate, normal_cfg, skip_tool_images=True, normalize_lists=False
+                    candidate, normal_cfg, skip_tool_images=True, normalize_lists=False,
+                    allow_ttl_cleanup=allow_ttl_cleanup,
                 )
+                tools_cleaned = True
                 if stats.changed:
                     req.contexts = contexts[:normal_prefix] + cleaned + contexts[-recent_n:]
                     contexts = req.contexts
                     normal_done = True
-                    self._compress_last_at[umo] = now
                     logger.info(
-                        "context_hygiene: normal threshold compression | chars %s -> %s | msgs %s -> %s | prefix half kept",
+                        "context_hygiene: normal threshold compression | chars %s -> %s | msgs %s -> %s | full prefix kept",
                         stats.before_chars, stats.after_chars,
                         stats.messages_before, stats.messages_after,
                     )
@@ -1325,24 +1334,35 @@ class ContextHygiene(Star):
                 weak_end = self._weak_middle_boundary(
                     umo, contexts, now, guard_minutes=max(0, guard // 2), force=True
                 )
-            if (compress_allowed and not normal_done and weak_end > prefix_n
-                    and (weak_hard_hit or weak_idle_due)):
+            if compress_allowed and not normal_done and weak_end > prefix_n:
                 compression = cfg.setdefault("compression", {})
                 compression["cache_prefix_messages"] = 0
                 compression["cache_friendly"] = False
                 cfg.setdefault("basic", {})["keep_recent_turns"] = 0
                 cfg["keep_recent_turns"] = 0
-                cfg.setdefault("tools", {})["ttl_idle_due"] = ttl_idle_due
-                cleaned, stats = clean_history(contexts[prefix_n:weak_end], cfg, skip_tool_images=True)
+                cleaned, stats = clean_history(
+                    contexts[prefix_n:weak_end], cfg, skip_tool_images=True,
+                    allow_ttl_cleanup=allow_ttl_cleanup,
+                )
+                tools_cleaned = True
                 if stats.changed:
                     req.contexts = contexts[:prefix_n] + cleaned + contexts[weak_end:]
                     contexts = req.contexts
-                    self._compress_last_at[umo] = now
                     logger.info(
                         "context_hygiene: weak middle cleaned | chars %s -> %s | msgs %s -> %s | tools %s",
                         stats.before_chars, stats.after_chars,
                         stats.messages_before, stats.messages_after,
                         stats.tool_messages_removed,
+                    )
+            if (maintenance_due and not tools_cleaned
+                    and as_bool(self._cfg("tools.cleanup_tools", False), False)):
+                tool_stats = CleanStats()
+                clean_tools(contexts, self._clean_config(), tool_stats, allow_ttl_cleanup=True)
+                if tool_stats.changed:
+                    req.contexts = contexts
+                    logger.info(
+                        "context_hygiene: maintenance tool cleanup | tools=%s | orphans=%s",
+                        tool_stats.tool_messages_removed, tool_stats.orphan_tool_messages_removed,
                     )
             if not compression_hit:
                 self._compression_cache[umo] = (compression_key, now, copy.deepcopy(contexts))

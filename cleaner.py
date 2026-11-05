@@ -561,8 +561,9 @@ def cap_current_tool_results(messages: list[dict], cfg: Any, stats: CleanStats) 
             _truncate_tool_result(message, limit, stats)
 
 
-def clean_tools(messages: list[dict], cfg: Any, stats: CleanStats) -> None:
-    if not as_bool(get_cfg(cfg, "tools.ttl_idle_due", True), True):
+def clean_tools(messages: list[dict], cfg: Any, stats: CleanStats,
+                allow_ttl_cleanup: bool = True) -> None:
+    if not allow_ttl_cleanup:
         return
     keep_recent = max(1, as_int(get_cfg(cfg, "tools.keep_recent_pairs", 3), 3))
     ttl_minutes = max(0, as_int(get_cfg(cfg, "tools.ttl_minutes", 65), 65))
@@ -1010,7 +1011,8 @@ def clean_memory_blocks(messages: list[dict], cfg: Any, stats: CleanStats,
 
 
 def clean_history(messages: Any, cfg: Any, skip_tool_images: bool = False,
-                  normalize_lists: bool = True) -> tuple[list[dict], CleanStats]:
+                  normalize_lists: bool = True,
+                  allow_ttl_cleanup: bool = True) -> tuple[list[dict], CleanStats]:
     """Return a cleaned copy and statistics; never mutates the input list."""
     if not isinstance(messages, list):
         return [], CleanStats()
@@ -1024,7 +1026,7 @@ def clean_history(messages: Any, cfg: Any, skip_tool_images: bool = False,
     clean_reminders(working, cfg, stats)
     dedupe_old(working, cfg, stats)
     if as_bool(get_cfg(cfg, "tools.cleanup_tools", False), False):
-        clean_tools(working, cfg, stats)
+        clean_tools(working, cfg, stats, allow_ttl_cleanup=allow_ttl_cleanup)
     if not skip_tool_images:
         strip_tool_image_artifacts(working)
     clean_images(working, cfg, stats)
