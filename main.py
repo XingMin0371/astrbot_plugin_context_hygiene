@@ -64,6 +64,8 @@ try:
         get_cfg,
         is_compressible_message,
         is_placeholder_only,
+        is_synthetic_message,
+        is_unknown_placeholder_message,
         message_chars,
         normalize_message_lists,
         real_prefix_end,
@@ -86,6 +88,8 @@ except ImportError:  # local/single-file import fallback
         get_cfg,
         is_compressible_message,
         is_placeholder_only,
+        is_synthetic_message,
+        is_unknown_placeholder_message,
         message_chars,
         normalize_message_lists,
         real_prefix_end,
@@ -97,7 +101,7 @@ except ImportError:  # local/single-file import fallback
     from tool_policy import clean_tool_definitions, gate_official_tools  # type: ignore[no-redef]
 
 PLUGIN_NAME = "astrbot_plugin_context_hygiene"
-VERSION = "1.8.9"
+VERSION = "1.9.0"
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
 IMAGE_ARTIFACT_DIR_NAME = "image_artifacts"
 
@@ -1178,6 +1182,8 @@ class ContextHygiene(Star):
         changed = 0
         for idx, message in enumerate(contexts):
             if not isinstance(message, dict):
+                continue
+            if is_synthetic_message(message) or is_unknown_placeholder_message(message):
                 continue
             raw_key = hashlib.sha1(
                 json.dumps(message, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8", "ignore")

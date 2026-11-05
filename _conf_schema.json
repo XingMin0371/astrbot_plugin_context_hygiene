@@ -68,7 +68,8 @@
       "enabled": {
         "description": "启用旧对话压缩",
         "type": "bool",
-        "default": true
+        "default": true,
+        "hint": "启用后才会压缩旧对话；关闭后只做去重、工具清理和占位符清理。"
       },
       "placeholder_max_messages": {
         "description": "占位符批量清理条数",
@@ -208,7 +209,8 @@
       "enabled": {
         "description": "启用工具循环守卫",
         "type": "bool",
-        "default": true
+        "default": true,
+        "hint": "限制单轮模型步数、工具调用和耗时，防止工具循环失控。"
       },
       "interactive": {
         "description": "前台/普通聊天预算",
@@ -217,17 +219,20 @@
           "max_steps": {
             "description": "最多模型步数",
             "type": "int",
-            "default": 6
+            "default": 6,
+            "hint": "交互对话中最多允许模型执行多少步；默认 6。"
           },
           "max_tool_calls": {
             "description": "最多工具调用次数",
             "type": "int",
-            "default": 4
+            "default": 4,
+            "hint": "交互对话中最多允许多少次工具调用；默认 4。"
           },
           "max_turn_seconds": {
             "description": "单轮最长秒数",
             "type": "int",
-            "default": 180
+            "default": 180,
+            "hint": "交互对话单轮最长秒数；默认 180。"
           },
           "max_turn_new_tokens": {
             "description": "一条用户消息完整轮次新增 Token 上限",
@@ -244,17 +249,20 @@
           "max_steps": {
             "description": "最多模型步数",
             "type": "int",
-            "default": 9
+            "default": 9,
+            "hint": "后台/定时任务最多允许模型执行多少步；默认 9。"
           },
           "max_tool_calls": {
             "description": "最多工具调用次数",
             "type": "int",
-            "default": 7
+            "default": 7,
+            "hint": "后台/定时任务最多允许多少次工具调用；默认 7。"
           },
           "max_turn_seconds": {
             "description": "单轮最长秒数",
             "type": "int",
-            "default": 300
+            "default": 300,
+            "hint": "后台/定时任务单轮最长秒数；默认 300。"
           },
           "max_turn_new_tokens": {
             "description": "一条用户消息完整轮次新增 Token 上限",
@@ -322,7 +330,8 @@
       "keep_recent_pairs": {
         "description": "保留最近工具调用对数",
         "type": "int",
-        "default": 3
+        "default": 3,
+        "hint": "最近多少对工具调用/结果不清理；默认 3 对。"
       },
       "remove_orphan": {
         "description": "删除孤立 tool 消息",
@@ -338,7 +347,8 @@
           "enabled": {
             "description": "启用工具定义清理",
             "type": "bool",
-            "default": true
+            "default": true,
+            "hint": "启用工具定义清理；只影响发给模型的工具 schema 副本。"
           },
           "mode": {
             "description": "清理模式",
@@ -353,17 +363,20 @@
           "remove_inactive": {
             "description": "移除 inactive 工具",
             "type": "bool",
-            "default": true
+            "default": true,
+            "hint": "移除 inactive 工具定义，减少无效工具占用。"
           },
           "normalize_whitespace": {
             "description": "清理工具描述空白",
             "type": "bool",
-            "default": true
+            "default": true,
+            "hint": "压缩工具描述中的多余空白。"
           },
           "deduplicate": {
             "description": "按工具名去重",
             "type": "bool",
-            "default": true
+            "default": true,
+            "hint": "删除重复工具定义。"
           },
           "strong": {
             "description": "强力清理参数",
@@ -400,7 +413,8 @@
           "enabled": {
             "description": "启用官方工具门控",
             "type": "bool",
-            "default": false
+            "default": false,
+            "hint": "按官方工具名单做 gating；默认关闭。"
           },
           "fallback_all": {
             "description": "不确定时保留全部官方工具",
@@ -444,7 +458,8 @@
       "placeholder": {
         "description": "无标签时的图片占位文本",
         "type": "string",
-        "default": "[图片已省略]"
+        "default": "[图片已省略]",
+        "hint": "无标签图片被省略时使用的占位文本。"
       },
       "keep_labels": {
         "description": "保留图片短标签",
@@ -485,7 +500,8 @@
       "desc_max_chars": {
         "description": "图片描述最大字数",
         "type": "int",
-        "default": 15
+        "default": 15,
+        "hint": "新图片描述最多保留多少字符；默认 15。"
       },
       "artifact_retention_days": {
         "description": "图片原图保留天数",
@@ -496,7 +512,8 @@
       "artifact_max_files": {
         "description": "图片原图最大文件数",
         "type": "int",
-        "default": 240
+        "default": 240,
+        "hint": "图片原图 artifact 最多保留文件数；默认 240。"
       },
       "caption_failure_ttl_seconds": {
         "description": "描述失败重试间隔秒数",
@@ -514,7 +531,8 @@
       "enabled": {
         "description": "启用记忆块清理",
         "type": "bool",
-        "default": true
+        "default": true,
+        "hint": "启用历史重复记忆注入块清理。"
       },
       "keep_latest": {
         "description": "保留最新记忆块份数",
@@ -544,7 +562,8 @@
       "require_admin": {
         "description": "仅管理员执行",
         "type": "bool",
-        "default": true
+        "default": true,
+        "hint": "执行持久清理/恢复时要求管理员身份。"
       },
       "admin_ids": {
         "description": "显式管理员 ID",
@@ -585,12 +604,14 @@
       "command_cooldown_seconds": {
         "description": "持久命令冷却秒数",
         "type": "int",
-        "default": 120
+        "default": 120,
+        "hint": "两次持久清理命令之间的冷却秒数；默认 120。"
       },
       "backup_retention_days": {
         "description": "逻辑备份保留天数",
         "type": "int",
-        "default": 15
+        "default": 15,
+        "hint": "逻辑备份最多保留天数；默认 15。"
       }
     }
   },
@@ -602,7 +623,8 @@
       "dedupe": {
         "description": "去重历史提醒",
         "type": "bool",
-        "default": true
+        "default": true,
+        "hint": "删除历史中重复的 system_reminder 块。"
       },
       "keep_latest": {
         "description": "保留当前消息最新提醒",

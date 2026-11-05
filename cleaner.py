@@ -902,6 +902,8 @@ def truncate_oversized_messages(messages: list[dict], limit: int = 10000) -> tup
     for message in messages:
         if not isinstance(message, dict):
             continue
+        if is_synthetic_message(message) or is_unknown_placeholder_message(message):
+            continue
         before = message_chars(message)
         if before <= limit:
             continue
@@ -1139,6 +1141,9 @@ def clean_history(messages: Any, cfg: Any, skip_tool_images: bool = False,
     cleaned = []
     for i, message in enumerate(working):
         if not isinstance(message, dict):
+            cleaned.append(message)
+            continue
+        if is_synthetic_message(message) or is_unknown_placeholder_message(message):
             cleaned.append(message)
             continue
         role = message.get("role")
