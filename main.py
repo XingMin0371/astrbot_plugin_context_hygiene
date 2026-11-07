@@ -101,7 +101,7 @@ except ImportError:  # local/single-file import fallback
     from tool_policy import clean_tool_definitions, gate_official_tools  # type: ignore[no-redef]
 
 PLUGIN_NAME = "astrbot_plugin_context_hygiene"
-VERSION = "1.9.0"
+VERSION = "1.9.1"
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
 IMAGE_ARTIFACT_DIR_NAME = "image_artifacts"
 
@@ -605,15 +605,17 @@ class ContextHygiene(Star):
                     return None
                 path = Path(urllib.parse.unquote(parsed.path if parsed else url))
                 safe_path = self._trusted_local_image(path)
-                if safe_path is None or safe_path.stat().st_size > max_bytes:
-                    return None
-                raw = await asyncio.to_thread(safe_path.read_bytes)
-                mime = mimetypes.guess_type(safe_path.name)[0] or "image/png"
+                def _read_local() -> bytes:
+                    if safe_path is None or safe_path.stat().st_size > max_bytes:
+                        return b""
+                    return safe_path.read_bytes()
+                raw = await asyncio.to_thread(_read_local)
+                mime = (mimetypes.guess_type(safe_path.name)[0] or "image/png") if safe_path else "image/png"
             elif url.startswith(("http://", "https://")):
                 parsed = urllib.parse.urlsplit(url)
-                if not parsed.hostname or not self._public_image_host(parsed.hostname):
-                    return None
                 def _fetch() -> bytes:
+                    if not parsed.hostname or not self._public_image_host(parsed.hostname):
+                        return b""
                     req = urllib.request.Request(url, headers={"User-Agent": "context-hygiene/1.1"})
                     with urllib.request.urlopen(req, timeout=15) as resp:
                         final = urllib.parse.urlsplit(resp.geturl())
@@ -753,7 +755,7 @@ class ContextHygiene(Star):
             f"标签最多{tag_max}字，描述最多{desc_max}字。"
             '只返回 JSON：{"tag":"标签","desc":"描述"}'
         )
-        cache = self._load_caption_cache()
+        cache = await asyncio.to_thread(self._load_caption_cache)
         labels = []
         changed = False
         kept_urls = []
@@ -767,7 +769,9 @@ class ContextHygiene(Star):
             artifact_id = ""
             content_key = ""
             if loaded is not None:
-                artifact_id = self._store_image_artifact(loaded[0], loaded[1])
+                artifact_id = await asyncio.to_thread(
+                    self._store_image_artifact, loaded[0], loaded[1]
+                )
                 content_key = hashlib.sha1(loaded[0]).hexdigest()
             url_key = hashlib.sha1(url.encode("utf-8", "ignore")).hexdigest()
             key = content_key or url_key
@@ -810,7 +814,7 @@ class ContextHygiene(Star):
             else:
                 kept_urls.append(url)
         if changed:
-            self._save_caption_cache(cache)
+            await asyncio.to_thread(self._save_caption_cache, cache)
         if labels:
             req.image_urls = kept_urls
             req.prompt = (req.prompt or "").rstrip() + "\n" + "\n".join(labels)
@@ -1161,7 +1165,7 @@ class ContextHygiene(Star):
             or "base64," in text
         )
 
-    def _structural_clean(self, contexts: list[dict]) -> int:
+    async def _structural_clean(self, contexts: list[dict]) -> int:
         """Cache deterministic structural transforms by raw-message hash."""
         now = time.time()
         prefix = real_prefix_end(contexts, max(0, as_int(self._cfg("compression.cache_prefix_messages", 24), 24)))
@@ -1220,7 +1224,7 @@ class ContextHygiene(Star):
         if changed or stale:
             self._structural_dirty = True
         if self._structural_dirty:
-            self._save_structural_cache()
+            await asyncio.to_thread(self._save_structural_cache)
         return changed
 
     def _compression_cache_key(self, contexts: list[dict]) -> str:
@@ -1340,7 +1344,7 @@ class ContextHygiene(Star):
                 return
             contexts = self._trim_private_window(umo, contexts, idle_due)
             req.contexts = contexts
-            structural_changed = self._structural_clean(contexts)
+            structural_changed = await self._structural_clean(contexts)
             if structural_changed:
                 req.contexts = contexts
                 logger.info("context_hygiene: structural cleanup | messages=%s", structural_changed)
@@ -1486,7 +1490,7 @@ class ContextHygiene(Star):
             if not compression_hit:
                 self._compression_cache[umo] = (compression_key, now, copy.deepcopy(contexts))
                 self._compression_dirty = True
-                self._save_compression_cache()
+                await asyncio.to_thread(self._save_compression_cache)
         except Exception as exc:  # noqa: BLE001
             # Fail open: an error must never break the user's request.
             logger.warning("context_hygiene: request filter skipped (%s: %s)", type(exc).__name__, exc)
