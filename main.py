@@ -133,6 +133,11 @@ class ContextHygiene(Star):
         self._compression_dirty = False
         self._last_artifact_cleanup = 0.0
         self._turn_guard_state: dict[str, dict] = {}
+        self._context_window_cache: int | None = None
+        try:
+            self._context_window_tokens()
+        except Exception:
+            pass
 
     def _cfg(self, key: str, default):
         if key in self._flat:
@@ -828,6 +833,8 @@ class ContextHygiene(Star):
 
     def _context_window_tokens(self) -> int:
         """Best-effort model window from AstrBot config; 0 means unknown."""
+        if self._context_window_cache is not None:
+            return self._context_window_cache
         try:
             from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
@@ -847,8 +854,10 @@ class ContextHygiene(Star):
                     if value > 0:
                         values.append(value)
                         break
-            return max(values) if values else 0
+            self._context_window_cache = max(values) if values else 0
+            return self._context_window_cache
         except Exception:
+            self._context_window_cache = 0
             return 0
 
     def _effective_thresholds(self) -> dict:
@@ -1392,7 +1401,7 @@ class ContextHygiene(Star):
                 )
             except Exception:
                 pass
-            self._maybe_cleanup_backups()
+            await asyncio.to_thread(self._maybe_cleanup_backups)
             compression_key = self._compression_cache_key(contexts)
             cached_compression = self._compression_cache.get(umo)
             compression_hit = bool(
@@ -1729,7 +1738,7 @@ class ContextHygiene(Star):
         return self._format_stats(stats, f"节省上下文：已写入\n备份：{backup.name}")
 
     async def _list_backups(self) -> str:
-        self._maybe_cleanup_backups()
+        await asyncio.to_thread(self._maybe_cleanup_backups)
         try:
             paths = [*self._backup_dir().glob("*.json"), *self._backup_dir().glob("*.bin")]
             files = sorted(paths, key=lambda p: p.stat().st_mtime, reverse=True)[:10]
