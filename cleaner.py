@@ -990,6 +990,7 @@ def compress_old(messages: list[dict], cfg: Any, stats: CleanStats, before_chars
 MEMORY_MARKER = "以下记忆是用第三人称写的"
 MEMORY_PLACEHOLDER = "[早期记忆块已省略]"
 _MEMORY_SEEN: dict[str, float] = {}
+_MEMORY_SEEN_LOADED = False
 _MEMORY_SEEN_LOCK = threading.Lock()
 
 
@@ -1011,9 +1012,9 @@ def _memory_seen_path() -> Path:
 
 
 def _load_memory_seen() -> dict[str, float]:
-    global _MEMORY_SEEN
+    global _MEMORY_SEEN, _MEMORY_SEEN_LOADED
     with _MEMORY_SEEN_LOCK:
-        if _MEMORY_SEEN:
+        if _MEMORY_SEEN_LOADED:
             return dict(_MEMORY_SEEN)
         try:
             data = json.loads(_memory_seen_path().read_text(encoding="utf-8"))
@@ -1021,15 +1022,17 @@ def _load_memory_seen() -> dict[str, float]:
                 _MEMORY_SEEN = {str(k): float(v) for k, v in data.items()}
         except Exception:
             _MEMORY_SEEN = {}
+        _MEMORY_SEEN_LOADED = True
         return dict(_MEMORY_SEEN)
 
 
 def _save_memory_seen(data: dict[str, float]) -> None:
-    global _MEMORY_SEEN
+    global _MEMORY_SEEN, _MEMORY_SEEN_LOADED
     cutoff = time.time() - 30 * 86400
     data = {k: v for k, v in data.items() if v >= cutoff}
     with _MEMORY_SEEN_LOCK:
         _MEMORY_SEEN = dict(data)
+        _MEMORY_SEEN_LOADED = True
         try:
             path = _memory_seen_path()
             path.parent.mkdir(parents=True, exist_ok=True)

@@ -23,6 +23,7 @@ import mimetypes
 import os
 import re
 import socket
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -134,6 +135,8 @@ class ContextHygiene(Star):
         self._last_artifact_cleanup = 0.0
         self._turn_guard_state: dict[str, dict] = {}
         self._context_window_cache: int | None = None
+        self._context_window_cache_at = 0.0
+        self._caption_cache_lock = threading.Lock()
         try:
             self._context_window_tokens()
         except Exception:
@@ -763,6 +766,7 @@ class ContextHygiene(Star):
         cache = await asyncio.to_thread(self._load_caption_cache)
         labels = []
         changed = False
+        touched = set()
         kept_urls = []
         fail_ttl = max(10, as_int(self._cfg("images.caption_failure_ttl_seconds", 60), 60))
         now = time.time()
@@ -800,15 +804,18 @@ class ContextHygiene(Star):
                             raise ValueError("empty caption")
                         item = {"tag": tag, "desc": desc, "artifact": artifact_id}
                         cache[key] = item
+                        touched.add(key)
                         changed = True
                     except Exception:
                         # Keep the original image and avoid retrying every turn.
                         cache[key] = {"failed_at": now}
+                        touched.add(key)
                         changed = True
                         kept_urls.append(url)
                         continue
                 elif artifact_id and item.get("artifact") != artifact_id:
                     item["artifact"] = artifact_id
+                    touched.add(key)
                     changed = True
             if isinstance(item, dict) and item.get("tag"):
                 tag = str(item.get("tag") or "")[:tag_max]
@@ -819,7 +826,13 @@ class ContextHygiene(Star):
             else:
                 kept_urls.append(url)
         if changed:
-            await asyncio.to_thread(self._save_caption_cache, cache)
+            def _merge_save() -> None:
+                with self._caption_cache_lock:
+                    latest = self._load_caption_cache()
+                    for key in touched:
+                        latest[key] = cache.get(key)
+                    self._save_caption_cache(latest)
+            await asyncio.to_thread(_merge_save)
         if labels:
             req.image_urls = kept_urls
             req.prompt = (req.prompt or "").rstrip() + "\n" + "\n".join(labels)
@@ -833,7 +846,8 @@ class ContextHygiene(Star):
 
     def _context_window_tokens(self) -> int:
         """Best-effort model window from AstrBot config; 0 means unknown."""
-        if self._context_window_cache is not None:
+        if (self._context_window_cache is not None
+                and time.time() - self._context_window_cache_at < 300):
             return self._context_window_cache
         try:
             from astrbot.core.utils.astrbot_path import get_astrbot_data_path
@@ -855,9 +869,11 @@ class ContextHygiene(Star):
                         values.append(value)
                         break
             self._context_window_cache = max(values) if values else 0
+            self._context_window_cache_at = time.time()
             return self._context_window_cache
         except Exception:
             self._context_window_cache = 0
+            self._context_window_cache_at = time.time()
             return 0
 
     def _effective_thresholds(self) -> dict:
@@ -1739,9 +1755,11 @@ class ContextHygiene(Star):
 
     async def _list_backups(self) -> str:
         await asyncio.to_thread(self._maybe_cleanup_backups)
-        try:
+        def _list_files():
             paths = [*self._backup_dir().glob("*.json"), *self._backup_dir().glob("*.bin")]
-            files = sorted(paths, key=lambda p: p.stat().st_mtime, reverse=True)[:10]
+            return sorted(paths, key=lambda p: p.stat().st_mtime, reverse=True)[:10]
+        try:
+            files = await asyncio.to_thread(_list_files)
         except (OSError, RuntimeError):
             files = []
         if not files:
