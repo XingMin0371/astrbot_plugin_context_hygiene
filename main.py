@@ -131,7 +131,6 @@ class ContextHygiene(Star):
         self._structural_cache, self._prefix_structural_done = self._load_structural_cache()
         self._structural_dirty = False
         self._compression_cache: dict[str, tuple[str, float, list[dict]]] = self._load_compression_cache()
-        self._compression_dirty = False
         self._last_artifact_cleanup = 0.0
         self._turn_guard_state: dict[str, dict] = {}
         self._context_window_cache: int | None = None
@@ -1186,7 +1185,6 @@ class ContextHygiene(Star):
             path.parent.mkdir(parents=True, exist_ok=True)
             payload = {"entries": {umo: [v[0], v[1], v[2]] for umo, v in self._compression_cache.items()}}
             path.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-            self._compression_dirty = False
         except Exception as exc:
             logger.debug("context_hygiene: compression cache save skipped (%s)", type(exc).__name__)
 
@@ -1562,7 +1560,6 @@ class ContextHygiene(Star):
                     )
             if not compression_hit:
                 self._compression_cache[umo] = (compression_key, now, copy.deepcopy(contexts))
-                self._compression_dirty = True
                 await asyncio.to_thread(self._save_compression_cache)
         except Exception as exc:  # noqa: BLE001
             # Fail open: an error must never break the user's request.

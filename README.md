@@ -1,6 +1,17 @@
-> 阈值说明：v1.2.6 进行了更合理的阈值估测。
+> 当前版本：v1.9.2。以下为当前实现说明。
 
 # 节省上下文 · context_hygiene
+
+当前版本：v1.9.2。
+
+当前要点：
+- 前缀按真实消息计数，跳过 `_no_save` 和合成注入。
+- 最近轮按真实 user 消息定位，最近段只做硬安全处理。
+- 模型窗口优先匹配当前 provider；多 provider 无法匹配时取最小窗口。
+- 图片下载的 DNS/文件 IO 在线程中执行；支持 thinking 和 Anthropic image source。
+- 持久清理默认关闭，开启后经 ConversationManager 写库。
+
+
 
 给 AstrBot 的**请求级节省上下文插件**。
 
@@ -462,7 +473,7 @@ astrbot.astrbot.*
 
 ## 版本
 
-`v1.2.5`
+`v1.9.2`
 
 ## 图片原图与加密
 
