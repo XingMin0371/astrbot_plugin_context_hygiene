@@ -102,7 +102,7 @@ except ImportError:  # local/single-file import fallback
     from tool_policy import clean_tool_definitions, gate_official_tools  # type: ignore[no-redef]
 
 PLUGIN_NAME = "astrbot_plugin_context_hygiene"
-VERSION = "1.9.1"
+VERSION = "1.9.2"
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
 IMAGE_ARTIFACT_DIR_NAME = "image_artifacts"
 
@@ -611,7 +611,10 @@ class ContextHygiene(Star):
                 parsed = urllib.parse.urlsplit(url) if url.startswith("file:") else None
                 if parsed is not None and parsed.netloc not in ("", "localhost"):
                     return None
-                path = Path(urllib.parse.unquote(parsed.path if parsed else url))
+                raw_path = urllib.parse.unquote(parsed.path if parsed else url)
+                if os.name == "nt" and re.match(r"^/[A-Za-z]:", raw_path):
+                    raw_path = raw_path[1:]
+                path = Path(raw_path)
                 safe_path = self._trusted_local_image(path)
                 def _read_local() -> bytes:
                     if safe_path is None or safe_path.stat().st_size > max_bytes:
@@ -740,12 +743,31 @@ class ContextHygiene(Star):
         except Exception as exc:
             logger.debug("context_hygiene: caption cache save skipped (%s)", type(exc).__name__)
 
-    async def _caption_current_images(self, req: ProviderRequest) -> None:
+    @staticmethod
+    def _event_image_urls(event) -> list[str]:
+        urls: list[str] = []
+        try:
+            messages = event.get_messages() if callable(getattr(event, "get_messages", None)) else []
+        except Exception:
+            messages = []
+        for component in messages or []:
+            for attr in ("url", "file", "path"):
+                value = getattr(component, attr, None)
+                if isinstance(value, str) and value.strip():
+                    urls.append(value.strip())
+                    break
+        return urls
+
+    async def _caption_current_images(self, req: ProviderRequest, event=None) -> None:
         """Caption new images once, before they enter history; never rewrite old images."""
         if not as_bool(self._cfg("images.ingest_caption", False), False):
             return
         urls = getattr(req, "image_urls", None)
-        if not isinstance(urls, list) or not urls:
+        urls = list(urls) if isinstance(urls, list) else []
+        for url in self._event_image_urls(event):
+            if url not in urls:
+                urls.append(url)
+        if not urls:
             return
         provider = None
         provider_id = str(self._cfg("images.caption_provider_id", "") or "").strip()
@@ -855,6 +877,18 @@ class ContextHygiene(Star):
             path = Path(get_astrbot_data_path()) / "cmd_config.json"
             config = json.loads(path.read_text(encoding="utf-8-sig"))
             values = []
+            choices = []
+            current_id = ""
+            current_model = ""
+            try:
+                current = self.context.get_using_provider()
+                current_id = str(getattr(current, "provider_id", "") or getattr(current, "id", "") or "")
+                current_model = str(getattr(current, "model", "") or "")
+                meta = current.meta() if callable(getattr(current, "meta", None)) else None
+                current_id = current_id or str(getattr(meta, "id", "") or "")
+                current_model = current_model or str(getattr(meta, "model", "") or "")
+            except Exception:
+                pass
             # AstrBot's standard field is max_context_tokens; accept common
             # aliases so non-DeepSeek providers can still use auto thresholds.
             for provider in config.get("provider", []) or []:
@@ -867,8 +901,21 @@ class ContextHygiene(Star):
                         value = 0
                     if value > 0:
                         values.append(value)
+                        choices.append((value, str(provider.get("id", "")), str(provider.get("model", ""))))
                         break
-            self._context_window_cache = max(values) if values else 0
+            selected = 0
+            for value, provider_id, model in choices:
+                if current_id and provider_id == current_id:
+                    selected = value
+                    break
+                if current_model and model == current_model:
+                    selected = value
+                    break
+            if not selected:
+                # Multiple providers but no reliable runtime match: use the
+                # smallest window so a small model is never overfilled.
+                selected = min(values) if values else 0
+            self._context_window_cache = selected
             self._context_window_cache_at = time.time()
             return self._context_window_cache
         except Exception:
@@ -1004,7 +1051,8 @@ class ContextHygiene(Star):
 
     def _trim_private_window(self, umo: str, contexts: list[dict], idle_due: bool) -> list[dict]:
         """Above the limit, after idle: replace middle with one protected summary block."""
-        if "GroupMessage" in umo:
+        kind = umo.split(":", 2)[1].lower() if umo.count(":") >= 2 else ""
+        if any(word in kind for word in ("group", "channel", "guild")):
             return contexts
         if not as_bool(self._cfg("private_window.enabled", False), False):
             return contexts
@@ -1344,7 +1392,7 @@ class ContextHygiene(Star):
                 cleaned = [m for m in raw_contexts if not self._is_cron_history_message(m)]
                 if len(cleaned) != len(raw_contexts):
                     req.contexts = cleaned
-            await self._caption_current_images(req)
+            await self._caption_current_images(req, event)
             now = time.time()
             previous_at = self._last_request_at.get(umo)
             idle_minutes = max(1, as_int(self._cfg("private_window.idle_minutes", self._cfg("private_idle_minutes", 10)), 10))

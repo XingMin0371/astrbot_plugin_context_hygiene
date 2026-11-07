@@ -224,7 +224,12 @@ def normalize_message_lists(messages: list[dict]) -> int:
 
 def _image_has_payload(part: dict) -> bool:
     nested = part.get("image_url")
-    values = [part, nested] if isinstance(nested, dict) else [part]
+    source = part.get("source")
+    values = [part]
+    if isinstance(nested, dict):
+        values.append(nested)
+    if isinstance(source, dict):
+        values.append(source)
     for obj in values:
         for key in ("url", "image_url", "data", "file"):
             if isinstance(obj.get(key), str) and obj.get(key).strip():
@@ -244,7 +249,7 @@ def is_placeholder_only(message: Any) -> bool:
     return not remaining.strip()
 
 
-THINK_TYPES = {"think", "reasoning"}
+THINK_TYPES = {"think", "thinking", "reasoning"}
 
 
 def replace_middle_think(messages: list[dict], cfg: Any) -> int:
@@ -343,8 +348,8 @@ def _is_empty_content(content: Any) -> bool:
             if ptype in TEXT_TYPES:
                 if str(part.get("text", "")).strip():
                     return False
-            elif ptype in {"think", "reasoning"}:
-                body = part.get("think", part.get("text", ""))
+            elif ptype in {"think", "thinking", "reasoning"}:
+                body = part.get("think", part.get("thinking", part.get("text", "")))
                 if str(body or "").strip():
                     return False
             else:
@@ -779,7 +784,12 @@ def _image_label(part: dict, max_chars: int) -> str:
 
 def _image_has_inline_base64(part: dict) -> bool:
     nested = part.get("image_url")
-    values = [part, nested] if isinstance(nested, dict) else [part]
+    source = part.get("source")
+    values = [part]
+    if isinstance(nested, dict):
+        values.append(nested)
+    if isinstance(source, dict):
+        values.append(source)
     for obj in values:
         for key in ("url", "image_url", "data", "file"):
             value = obj.get(key)

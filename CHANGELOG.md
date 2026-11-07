@@ -1,7 +1,14 @@
 # CHANGELOG
 
-当前版本：**v1.9.1**
+当前版本：**v1.9.2**
 
+
+## v1.9.2 — 2026-11-07
+
+- 模型窗口优先匹配当前 provider；多 provider 无法匹配时取最小窗口，避免小模型溢出。
+- 支持 thinking 推理块和 Anthropic image source 格式。
+- 图片描述可从平台事件消息中补取图片 URL。
+- 私聊窗口和 file: 路径解析兼容非 OneBot 平台与 Windows 盘符。
 
 ## v1.9.1 — 2026-11-07
 
