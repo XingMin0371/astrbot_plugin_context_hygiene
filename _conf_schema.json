@@ -633,5 +633,60 @@
         "default": true
       }
     }
+  },
+  "cold_start": {
+    "description": "群聊冷启动压缩",
+    "hint": "首次请求先在本地摘要旧上下文，减少 provider 缓存失效后的未命中 token。",
+    "type": "object",
+    "items": {
+      "enabled": {
+        "description": "启用冷启动压缩",
+        "hint": "默认开启；只压缩本次请求副本，不写回数据库。",
+        "type": "bool",
+        "default": true
+      },
+      "apply_to_groups": {
+        "description": "作用于群聊",
+        "hint": "群聊冷启动通常是最大的一笔未命中；默认开启。",
+        "type": "bool",
+        "default": true
+      },
+      "apply_to_private": {
+        "description": "作用于私聊",
+        "hint": "私聊已有独立的 idle 窗口；默认关闭。",
+        "type": "bool",
+        "default": false
+      },
+      "idle_minutes": {
+        "description": "冷启动判定分钟",
+        "hint": "默认 660 分钟；推荐 10-15 小时，按模型缓存实际冷却情况调整。",
+        "type": "int",
+        "default": 660
+      },
+      "min_context_chars": {
+        "description": "最小上下文触发字符",
+        "hint": "上下文小于该值不压缩；默认 8000。",
+        "type": "int",
+        "default": 8000
+      },
+      "keep_recent_turns": {
+        "description": "保留最近轮数",
+        "hint": "保留最近用户轮数，其余旧消息摘要；默认 8。",
+        "type": "int",
+        "default": 8
+      },
+      "target_messages": {
+        "description": "目标消息条数",
+        "hint": "低于该条数不裁；默认 30，推荐 24-36。",
+        "type": "int",
+        "default": 30
+      },
+      "summary_budget_chars": {
+        "description": "摘要字符预算",
+        "hint": "本地摘要最多保留字符；默认 1200。",
+        "type": "int",
+        "default": 1200
+      }
+    }
   }
 }

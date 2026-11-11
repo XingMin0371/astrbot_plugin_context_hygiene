@@ -59,6 +59,7 @@ try:
         as_int,
         clean_history,
         clean_memory_blocks,
+        context_fingerprint,
         clean_tools,
         estimate_tokens,
         flatten_config,
@@ -68,6 +69,8 @@ try:
         is_synthetic_message,
         is_unknown_placeholder_message,
         message_chars,
+        message_fingerprint,
+        snapshot_messages,
         normalize_message_lists,
         real_prefix_end,
         recent_user_start,
@@ -83,6 +86,7 @@ except ImportError:  # local/single-file import fallback
         as_int,
         clean_history,
         clean_memory_blocks,
+        context_fingerprint,
         clean_tools,
         estimate_tokens,
         flatten_config,
@@ -92,6 +96,8 @@ except ImportError:  # local/single-file import fallback
         is_synthetic_message,
         is_unknown_placeholder_message,
         message_chars,
+        message_fingerprint,
+        snapshot_messages,
         normalize_message_lists,
         real_prefix_end,
         recent_user_start,
@@ -102,7 +108,7 @@ except ImportError:  # local/single-file import fallback
     from tool_policy import clean_tool_definitions, gate_official_tools  # type: ignore[no-redef]
 
 PLUGIN_NAME = "astrbot_plugin_context_hygiene"
-VERSION = "1.9.2"
+VERSION = "1.9.5"
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
 IMAGE_ARTIFACT_DIR_NAME = "image_artifacts"
 
@@ -131,6 +137,7 @@ class ContextHygiene(Star):
         self._structural_cache, self._prefix_structural_done = self._load_structural_cache()
         self._structural_dirty = False
         self._compression_cache: dict[str, tuple[str, float, list[dict]]] = self._load_compression_cache()
+        self._last_compression_save: dict[str, float] = {}
         self._last_artifact_cleanup = 0.0
         self._turn_guard_state: dict[str, dict] = {}
         self._context_window_cache: int | None = None
@@ -659,6 +666,10 @@ class ContextHygiene(Star):
             else:
                 body = raw
             path.write_bytes(body)
+            try:
+                os.chmod(path, 0o600)
+            except OSError:
+                pass
         return artifact_id
 
     def _read_image_artifact(self, path: Path) -> bytes:
@@ -721,6 +732,35 @@ class ContextHygiene(Star):
         except Exception:
             return "图片原图读取失败。"
 
+    def _write_private_json(self, path: Path, payload: dict, indent: int | None = None) -> None:
+        """Atomically write private cache JSON with 0600 permissions."""
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            os.chmod(path.parent, 0o700)
+        except OSError:
+            pass
+        text = json.dumps(payload, ensure_ascii=False, indent=indent,
+                          separators=(",", ":") if indent is None else None)
+        tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+        try:
+            with open(tmp, "w", encoding="utf-8") as fh:
+                fh.write(text)
+            try:
+                os.chmod(tmp, 0o600)
+            except OSError:
+                pass
+            os.replace(tmp, path)
+            try:
+                os.chmod(path, 0o600)
+            except OSError:
+                pass
+        finally:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+
     def _caption_cache_path(self) -> Path:
         return self._plugin_data_dir() / "image_captions.json"
 
@@ -736,9 +776,7 @@ class ContextHygiene(Star):
 
     def _save_caption_cache(self, cache: dict) -> None:
         try:
-            path = self._caption_cache_path()
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
+            self._write_private_json(self._caption_cache_path(), cache, indent=2)
         except Exception as exc:
             logger.debug("context_hygiene: caption cache save skipped (%s)", type(exc).__name__)
 
@@ -1048,6 +1086,80 @@ class ContextHygiene(Star):
             and str(message.get("content", "")).lstrip().startswith("[CronJob]")
         )
 
+    def _cold_sanitize(self, contexts: list[dict]) -> list[dict]:
+        """Remove reasoning parts and exact duplicate chat turns before a cold send."""
+        think_types = {"think", "thinking", "reasoning"}
+        seen: set[tuple[str, str]] = set()
+        out: list[dict] = []
+        for message in contexts:
+            if not isinstance(message, dict):
+                continue
+            role = message.get("role")
+            content = message.get("content")
+            if role == "assistant" and isinstance(content, list):
+                parts = [
+                    p for p in content
+                    if not (isinstance(p, dict) and p.get("type") in think_types)
+                ]
+                if len(parts) != len(content):
+                    if not parts and not message.get("tool_calls"):
+                        continue
+                    message = dict(message)
+                    message["content"] = parts
+                    content = parts
+            if role in {"user", "assistant"} and not message.get("tool_calls"):
+                text = content if isinstance(content, str) else " ".join(
+                    str(p.get("text", "")) for p in content if isinstance(p, dict)
+                ) if isinstance(content, list) else ""
+                key = (str(role), "".join(str(text).split()))
+                if key and key in seen:
+                    continue
+                if key:
+                    seen.add(key)
+            out.append(message)
+        return out
+
+    def _cold_start_contexts(self, umo: str, contexts: list[dict], idle_due: bool, is_cron: bool) -> list[dict]:
+        """Local first-request compression after the provider cache likely expired.
+
+        No model call is made: the older middle is summarized locally and only
+        the recent turns are kept.  Group is the default target because its cold
+        prompts are usually the largest.
+        """
+        if not idle_due or is_cron or not as_bool(self._cfg("cold_start.enabled", True), True):
+            return contexts
+        kind = umo.split(":", 2)[1].lower() if umo.count(":") >= 2 else ""
+        if any(word in kind for word in ("group", "channel", "guild")):
+            if not as_bool(self._cfg("cold_start.apply_to_groups", True), True):
+                return contexts
+        elif not as_bool(self._cfg("cold_start.apply_to_private", False), False):
+            return contexts
+        min_chars = max(2000, as_int(self._cfg("cold_start.min_context_chars", 8000), 8000))
+        contexts = self._cold_sanitize(contexts)
+        if not contexts or sum(message_chars(m) for m in contexts) < min_chars:
+            return contexts
+        keep_turns = max(1, as_int(self._cfg("cold_start.keep_recent_turns", 8), 8))
+        target = max(keep_turns * 2 + 1, as_int(self._cfg("cold_start.target_messages", 30), 30))
+        if len(contexts) <= target:
+            return contexts
+        recent_start = max(1, len(contexts) - keep_turns * 2)
+        while recent_start > 1 and contexts[recent_start].get("role") != "user":
+            recent_start -= 1
+        if recent_start <= 1:
+            return contexts
+        budget = max(300, min(2000, as_int(self._cfg("cold_start.summary_budget_chars", 1200), 1200)))
+        summary = self._summarize_dropped(contexts[:recent_start], "", budget)
+        if not summary:
+            return contexts
+        trimmed = [{"role": "user", "content": summary}] + contexts[recent_start:]
+        logger.info(
+            "context_hygiene: cold start | %s -> %s msgs | summarized %s old msgs | chars %s -> %s",
+            len(contexts), len(trimmed), recent_start,
+            sum(message_chars(m) for m in contexts),
+            sum(message_chars(m) for m in trimmed),
+        )
+        return trimmed
+
     def _trim_private_window(self, umo: str, contexts: list[dict], idle_due: bool) -> list[dict]:
         """Above the limit, after idle: replace middle with one protected summary block."""
         kind = umo.split(":", 2)[1].lower() if umo.count(":") >= 2 else ""
@@ -1092,6 +1204,37 @@ class ContextHygiene(Star):
             len(contexts), len(trimmed), cut - prefix_end,
         )
         return trimmed
+
+    async def _conversation_last_activity(self, event: AstrMessageEvent) -> float | None:
+        """Return the last saved conversation time, if the manager exposes one."""
+        try:
+            mgr = self._conversation_manager()
+            umo = str(getattr(event, "unified_msg_origin", "") or "")
+            if not mgr or not umo:
+                return None
+            cid = await mgr.get_curr_conversation_id(umo)
+            if not cid:
+                return None
+            conv = await mgr.get_conversation(umo, cid)
+            if conv is None:
+                return None
+            for attr in ("updated_at", "created_at"):
+                value = getattr(conv, attr, None)
+                if isinstance(value, datetime):
+                    if value.tzinfo is None:
+                        value = value.replace(tzinfo=timezone.utc)
+                    return value.timestamp()
+                if isinstance(value, str) and value:
+                    try:
+                        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                        if parsed.tzinfo is None:
+                            parsed = parsed.replace(tzinfo=timezone.utc)
+                        return parsed.timestamp()
+                    except ValueError:
+                        continue
+        except Exception:
+            return None
+        return None
 
     def _message_key(self, message: dict) -> str:
         payload = json.dumps(
@@ -1181,10 +1324,8 @@ class ContextHygiene(Star):
     def _save_compression_cache(self) -> None:
         try:
             self._prune_compression_cache()
-            path = self._compression_cache_path()
-            path.parent.mkdir(parents=True, exist_ok=True)
             payload = {"entries": {umo: [v[0], v[1], v[2]] for umo, v in self._compression_cache.items()}}
-            path.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+            self._write_private_json(self._compression_cache_path(), payload)
         except Exception as exc:
             logger.debug("context_hygiene: compression cache save skipped (%s)", type(exc).__name__)
 
@@ -1215,13 +1356,11 @@ class ContextHygiene(Star):
 
     def _save_structural_cache(self) -> None:
         try:
-            path = self._structural_cache_path()
-            path.parent.mkdir(parents=True, exist_ok=True)
             payload = {
                 "prefix_done": self._prefix_structural_done,
                 "entries": {k: [v[0], v[1]] for k, v in self._structural_cache.items()},
             }
-            path.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+            self._write_private_json(self._structural_cache_path(), payload)
             self._structural_dirty = False
         except Exception as exc:
             logger.debug("context_hygiene: structural cache save skipped (%s)", type(exc).__name__)
@@ -1260,13 +1399,11 @@ class ContextHygiene(Star):
                 continue
             if is_synthetic_message(message) or is_unknown_placeholder_message(message):
                 continue
-            raw_key = hashlib.sha1(
-                json.dumps(message, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8", "ignore")
-            ).hexdigest()
+            raw_key = message_fingerprint(message).hex()
             key = f"{config_key}:{raw_key}"
             cached = self._structural_cache.get(key)
             if cached is not None:
-                contexts[idx] = copy.deepcopy(cached[1])
+                contexts[idx] = snapshot_messages([cached[1]])[0]
                 continue
             if idx < prefix and not first_prefix and not self._hard_structural(message):
                 continue
@@ -1279,7 +1416,7 @@ class ContextHygiene(Star):
                     and temp[0].get("role") == "tool"):
                 normalize_message_lists(temp)
             contexts[idx] = temp[0]
-            self._structural_cache[key] = (now, copy.deepcopy(temp[0]))
+            self._structural_cache[key] = (now, snapshot_messages([temp[0]])[0])
             changed += 1
         cutoff = now - 3 * 86400
         stale = [k for k, (ts, _m) in self._structural_cache.items() if ts < cutoff]
@@ -1299,19 +1436,17 @@ class ContextHygiene(Star):
         return changed
 
     def _compression_cache_key(self, contexts: list[dict]) -> str:
-        payload = {
-            "contexts": contexts,
-            "config": {
+        config_key = hashlib.blake2b(
+            json.dumps({
                 "threshold_chars": self._cfg("basic.threshold_chars", 72000),
                 "threshold_tokens": self._cfg("basic.threshold_tokens", 39600),
                 "keep_recent_turns": self._cfg("basic.keep_recent_turns", 12),
                 "weak": self._cfg("compression", {}),
                 "tools": self._cfg("tools", {}),
-            },
-        }
-        return hashlib.sha1(
-            json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8", "ignore")
+            }, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8", "ignore"),
+            digest_size=12,
         ).hexdigest()
+        return f"{context_fingerprint(contexts)}:{config_key}"
 
     def _remove_placeholder_messages(self, umo: str, contexts: list[dict],
                                      now: float, prefix: int, recent: int) -> list[dict]:
@@ -1393,8 +1528,19 @@ class ContextHygiene(Star):
             await self._caption_current_images(req, event)
             now = time.time()
             previous_at = self._last_request_at.get(umo)
+            if previous_at is None:
+                # After a restart the in-memory timestamp is gone.  Fall back to
+                # the conversation's last saved activity so overnight gaps are
+                # still recognized as cold starts.
+                previous_at = await self._conversation_last_activity(event)
             idle_minutes = max(1, as_int(self._cfg("private_window.idle_minutes", self._cfg("private_idle_minutes", 10)), 10))
             idle_due = bool(previous_at and now - previous_at >= idle_minutes * 60)
+            # DeepSeek disk cache is cleared automatically after hours-to-days.
+            # Compress the old middle locally on the first request after a long gap,
+            # before it is sent to the provider.  This lowers the cold-start miss
+            # without making an extra model call.
+            cold_idle_minutes = max(60, as_int(self._cfg("cold_start.idle_minutes", 660), 660))
+            cold_idle_due = bool(previous_at and now - previous_at >= cold_idle_minutes * 60)
             maintenance_idle = max(1, as_int(self._cfg("basic.maintenance_idle_minutes", 10), 10))
             max_interval = 60
             maintenance_due = bool(
@@ -1413,6 +1559,7 @@ class ContextHygiene(Star):
             contexts = getattr(req, "contexts", None)
             if not isinstance(contexts, list) or not contexts:
                 return
+            contexts = self._cold_start_contexts(umo, contexts, cold_idle_due, is_cron)
             contexts = self._trim_private_window(umo, contexts, idle_due)
             req.contexts = contexts
             structural_changed = await self._structural_clean(contexts)
@@ -1472,7 +1619,7 @@ class ContextHygiene(Star):
                 and now - cached_compression[1] < self.COMPRESSION_CACHE_SECONDS
             )
             if compression_hit:
-                req.contexts = copy.deepcopy(cached_compression[2])
+                req.contexts = snapshot_messages(cached_compression[2])
                 contexts = req.contexts
             keep_turns = max(1, as_int(self._cfg("basic.keep_recent_turns", 12), 12))
             normal_prefix = real_prefix_end(contexts, max(0, as_int(self._cfg("compression.cache_prefix_messages", 24), 24)))
@@ -1559,8 +1706,11 @@ class ContextHygiene(Star):
                         tool_stats.tool_messages_removed, tool_stats.orphan_tool_messages_removed,
                     )
             if not compression_hit:
-                self._compression_cache[umo] = (compression_key, now, copy.deepcopy(contexts))
-                await asyncio.to_thread(self._save_compression_cache)
+                self._compression_cache[umo] = (compression_key, now, snapshot_messages(contexts))
+                # Disk persistence is an optimization; keep it off the hot path.
+                if now - self._last_compression_save.get(umo, 0.0) >= 30:
+                    self._last_compression_save[umo] = now
+                    await asyncio.to_thread(self._save_compression_cache)
         except Exception as exc:  # noqa: BLE001
             # Fail open: an error must never break the user's request.
             logger.warning("context_hygiene: request filter skipped (%s: %s)", type(exc).__name__, exc)

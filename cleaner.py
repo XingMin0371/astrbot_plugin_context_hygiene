@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import pickle
 import re
 import threading
 import time
@@ -115,9 +116,27 @@ def flatten_config(config: Any, prefix: str = "") -> dict[str, Any]:
 
 
 def get_cfg(config: Any, key: str, default: Any = None) -> Any:
-    flat = config if isinstance(config, dict) and "." in str(key) and key in config else flatten_config(config)
-    value = flat.get(key, DEFAULTS.get(key, default))
-    return default if value is None else value
+    """Read a dotted config key without flattening the whole config.
+
+    ``flatten_config`` was previously called for every lookup during hot
+    context cleaning.  Direct traversal is O(depth) per lookup and preserves
+    explicit dotted keys used by tests.
+    """
+    if not isinstance(config, dict):
+        return DEFAULTS.get(key, default)
+    if key in config:
+        value = config[key]
+        return DEFAULTS.get(key, default) if value is None else value
+    current: Any = config
+    for part in str(key).split("."):
+        if not isinstance(current, dict) or part not in current:
+            value = DEFAULTS.get(key, default)
+            return default if value is None else value
+        current = current[part]
+    if current is None:
+        value = DEFAULTS.get(key, default)
+        return default if value is None else value
+    return current
 
 
 def as_int(value: Any, default: int) -> int:
@@ -321,6 +340,56 @@ def message_chars(message: Any) -> int:
 def estimate_tokens(chars: int) -> int:
     """Cheap, deliberately conservative estimate; no tokenizer dependency."""
     return max(0, int(chars * 0.55))
+def message_fingerprint(message: Any) -> bytes:
+    """Stable, fast structural fingerprint.
+
+    The old path serialized every message with json.dumps() on every request.
+    repr() is materially cheaper while remaining value-sensitive; cache misses
+    caused by different dict insertion order are harmless.
+    """
+    if not isinstance(message, dict):
+        return b"none"
+    h = hashlib.blake2b(digest_size=16)
+    for key in ("role", "name", "tool_call_id"):
+        h.update(str(message.get(key, "")).encode("utf-8", "ignore"))
+        h.update(b"\x00")
+    h.update(repr(message.get("content")).encode("utf-8", "ignore"))
+    if message.get("tool_calls"):
+        h.update(repr(message.get("tool_calls")).encode("utf-8", "ignore"))
+    return h.digest()
+
+
+def context_fingerprint(contexts: Any) -> str:
+    """Fingerprint request contexts with the fastest safe local serializer.
+
+    Provider contexts are plain dict/list/string data.  Pickle is substantially
+    faster than JSON here and is used only for an in-process cache key.  Fall
+    back to repr for unusual values.
+    """
+    payload: bytes
+    try:
+        payload = pickle.dumps(contexts, protocol=5)
+    except Exception:
+        payload = repr(contexts).encode("utf-8", "ignore")
+    return hashlib.blake2b(payload, digest_size=24).hexdigest()
+
+
+def snapshot_messages(messages: Any) -> list[Any]:
+    """Copy only mutable message fields; avoids deep-copying the full envelope."""
+    if not isinstance(messages, list):
+        return []
+    out = []
+    for message in messages:
+        if isinstance(message, dict):
+            item = dict(message)
+            if "content" in message:
+                item["content"] = copy.deepcopy(message.get("content"))
+            if "tool_calls" in message:
+                item["tool_calls"] = copy.deepcopy(message.get("tool_calls"))
+            out.append(item)
+        else:
+            out.append(copy.deepcopy(message))
+    return out
 
 
 def _new_message(message: dict) -> dict:
