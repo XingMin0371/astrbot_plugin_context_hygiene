@@ -386,6 +386,8 @@ def snapshot_messages(messages: Any) -> list[Any]:
                 item["content"] = copy.deepcopy(message.get("content"))
             if message.get("tool_calls"):
                 item["tool_calls"] = copy.deepcopy(message.get("tool_calls"))
+            else:
+                item.pop("tool_calls", None)
             out.append(item)
         else:
             out.append(copy.deepcopy(message))
@@ -399,6 +401,8 @@ def _new_message(message: dict) -> dict:
         out["content"] = copy.deepcopy(message.get("content"))
     if message.get("tool_calls"):
         out["tool_calls"] = copy.deepcopy(message.get("tool_calls"))
+    else:
+        out.pop("tool_calls", None)
     return out
 
 
