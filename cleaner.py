@@ -1199,11 +1199,13 @@ def clean_memory_blocks(messages: list[dict], cfg: Any, stats: CleanStats,
 
 
 
-def sanitize_tool_structure(messages: list[dict]) -> int:
+
+def sanitize_tool_structure(messages: list[dict], model: str = "") -> int:
     """Final request-level tool structure guard.
 
     Removes empty/malformed tool_calls, keeps only calls that have a matching
-    tool result, and drops orphan/duplicate tool messages.
+    tool result, and drops orphan/duplicate tool messages.  This is the
+    distributable guard for plugin users; AstrBot core should not need changes.
     """
     if not isinstance(messages, list):
         return 0
@@ -1239,6 +1241,8 @@ def sanitize_tool_structure(messages: list[dict]) -> int:
                         valid.append(call)
                 if valid:
                     msg["tool_calls"] = valid
+                    if "deepseek" in str(model).lower() and msg.get("reasoning_content") is None:
+                        msg["reasoning_content"] = ""
                 else:
                     msg.pop("tool_calls", None)
             if not msg.get("tool_calls") and _is_empty_content(msg.get("content")):
@@ -1273,7 +1277,6 @@ def sanitize_tool_structure(messages: list[dict]) -> int:
             final.append(msg)
     messages[:] = final
     return before - len(final)
-
 
 
 def clean_history(messages: Any, cfg: Any, skip_tool_images: bool = False,

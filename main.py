@@ -54,6 +54,7 @@ except ImportError:  # pragma: no cover - compatibility fallback
 
 try:
     from .cleaner import (
+    sanitize_tool_structure,
         CleanStats,
         as_bool,
         as_int,
@@ -1714,6 +1715,13 @@ class ContextHygiene(Star):
         except Exception as exc:  # noqa: BLE001
             # Fail open: an error must never break the user's request.
             logger.warning("context_hygiene: request filter skipped (%s: %s)", type(exc).__name__, exc)
+        finally:
+            try:
+                contexts = getattr(req, "contexts", None)
+                if isinstance(contexts, list):
+                    sanitize_tool_structure(contexts, str(getattr(req, "model", "") or ""))
+            except Exception:
+                pass
 
     def _format_stats(self, stats: CleanStats, title: str) -> str:
         lines = [
