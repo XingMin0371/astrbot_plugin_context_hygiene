@@ -1198,6 +1198,84 @@ def clean_memory_blocks(messages: list[dict], cfg: Any, stats: CleanStats,
         stats.memory_blocks_removed += 1
 
 
+
+def sanitize_tool_structure(messages: list[dict]) -> int:
+    """Final request-level tool structure guard.
+
+    Removes empty/malformed tool_calls, keeps only calls that have a matching
+    tool result, and drops orphan/duplicate tool messages.
+    """
+    if not isinstance(messages, list):
+        return 0
+    before = len(messages)
+    result_ids = {
+        str(msg.get("tool_call_id"))
+        for msg in messages
+        if isinstance(msg, dict)
+        and msg.get("role") == "tool"
+        and msg.get("tool_call_id")
+    }
+    cleaned = []
+    for msg in messages:
+        if not isinstance(msg, dict):
+            cleaned.append(msg)
+            continue
+        if msg.get("role") == "assistant":
+            calls = msg.get("tool_calls")
+            if calls is not None:
+                valid = []
+                if isinstance(calls, list):
+                    for call in calls:
+                        if not isinstance(call, dict):
+                            continue
+                        cid = call.get("id")
+                        fn = call.get("function")
+                        if not isinstance(cid, str) or not cid:
+                            continue
+                        if not isinstance(fn, dict) or not fn.get("name"):
+                            continue
+                        if cid not in result_ids:
+                            continue
+                        valid.append(call)
+                if valid:
+                    msg["tool_calls"] = valid
+                else:
+                    msg.pop("tool_calls", None)
+            if not msg.get("tool_calls") and _is_empty_content(msg.get("content")):
+                if msg.get("reasoning_content"):
+                    msg["content"] = ""
+                else:
+                    continue
+        cleaned.append(msg)
+
+    pending: set[str] = set()
+    final = []
+    for msg in cleaned:
+        if not isinstance(msg, dict):
+            final.append(msg)
+            pending = set()
+            continue
+        role = msg.get("role")
+        if role == "assistant" and msg.get("tool_calls"):
+            pending = {
+                str(call.get("id"))
+                for call in msg["tool_calls"]
+                if isinstance(call, dict) and call.get("id")
+            }
+            final.append(msg)
+        elif role == "tool":
+            cid = str(msg.get("tool_call_id") or "")
+            if cid and cid in pending:
+                pending.remove(cid)
+                final.append(msg)
+        else:
+            pending = set()
+            final.append(msg)
+    messages[:] = final
+    return before - len(final)
+
+
+
 def clean_history(messages: Any, cfg: Any, skip_tool_images: bool = False,
                   normalize_lists: bool = True,
                   allow_ttl_cleanup: bool = True) -> tuple[list[dict], CleanStats]:
@@ -1241,6 +1319,7 @@ def clean_history(messages: Any, cfg: Any, skip_tool_images: bool = False,
             continue
         cleaned.append(message)
     working = cleaned
+    stats.tool_messages_removed += sanitize_tool_structure(working)
     stats.messages_after = len(working)
     stats.after_chars = sum(message_chars(m) for m in working)
     stats.changed = stats.before_chars != stats.after_chars or stats.messages_before != stats.messages_after
