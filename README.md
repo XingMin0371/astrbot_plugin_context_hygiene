@@ -9,7 +9,7 @@
 - 最近轮按真实 user 消息定位，最近段只做硬安全处理。
 - 模型窗口优先匹配当前 provider；多 provider 无法匹配时取最小窗口。
 - 图片下载的 DNS/文件 IO 在线程中执行；支持 thinking 和 Anthropic image source。
-- 持久清理默认关闭，开启后经 ConversationManager 写库。
+- 持久清理默认关闭；即使开启 `persistent.allow` 也不会自动执行，需管理员手动 `run confirm` 才写库。
 
 
 
@@ -25,6 +25,83 @@
 - 上下文过大时做确定性压缩
 - 确定性清理/压缩不调用模型；图片描述开启时会调用图片 Provider
 - 默认不写会话数据库
+
+## 持久清理：最短使用流程
+
+先记住三个不同的东西：
+
+```text
+persistent.allow = 允许管理员使用持久清理命令（不会自动执行）
+run              = 执行一次
+confirm          = 二次确认，真正写库
+```
+
+### 1. 开启权限
+
+```yaml
+persistent:
+  allow: true
+  require_admin: true
+  admin_ids: ["你的QQ号"]
+  require_confirmation: true
+```
+
+### 2. 预览
+
+在要清理的 QQ 会话中发送：
+
+```text
+/节省上下文 dry-run
+```
+
+只统计会清理多少内容，不写数据库。
+
+### 3. 发起执行
+
+```text
+/节省上下文 run
+```
+
+开启 `require_confirmation` 时，这一步只返回确认提示，不会写库。
+
+### 4. 确认写库
+
+```text
+/节省上下文 run confirm
+```
+
+执行后才会清理历史中的占位符、旧工具调用、重复/低密度上下文，并先备份再写库。
+
+### 5. 查看备份和恢复
+
+```text
+/节省上下文 backups
+/节省上下文 restore <备份文件名> confirm
+```
+
+### 为什么“打开了持久清理但没效果”
+
+按常见原因排查：
+
+```text
+1. persistent.allow 实际仍是 false
+   -> 只做了每轮请求过滤，没有持久清理权限
+
+2. 只执行了 dry-run
+   -> 只预览，不写库
+
+3. 只执行了 run
+   -> 还需要 run confirm
+
+4. 每个会话独立
+   -> 私聊和群聊要分别执行
+
+5. 日志里的 placeholder GC 只改请求副本
+   -> 原始历史要 run confirm 才会清
+
+6. images.clean_old=false
+   -> 不会事后替换旧图片，和占位符清理是两件事
+```
 
 ## 安全边界
 
@@ -104,6 +181,7 @@ data/plugin_data/astrbot_plugin_context_hygiene/backups/
 ```text
 /节省上下文 status
 /节省上下文 dry-run
+/节省上下文 run
 /节省上下文 run confirm
 /节省上下文 backups
 /节省上下文 restore <文件名> confirm
@@ -111,7 +189,8 @@ data/plugin_data/astrbot_plugin_context_hygiene/backups/
 
 - `status`：只读统计
 - `dry-run`：只预览，不写入
-- `run`：需要开启持久清理并具备管理员权限
+- `run`：发起持久清理；需要开启 `persistent.allow` 并具备管理员权限
+- `run confirm`：在开启确认时真正写库
 - `backups`：列出逻辑备份
 - `restore`：从备份恢复当前会话
 
