@@ -481,23 +481,11 @@ class ContextHygiene(Star):
         if not isinstance(compression, dict):
             compression = {}
             cfg["compression"] = compression
-        compression["hard_threshold_chars"] = thresholds["hard_chars"]
-        compression["hard_threshold_tokens"] = thresholds["hard_tokens"]
         return cfg
 
     def _weak_clean_config(self) -> dict:
         cfg = self._clean_config()
         compression = cfg.setdefault("compression", {})
-        compression["hard_threshold_chars"] = as_int(
-            self._cfg("compression.weak_force_chars",
-                      self._cfg("weak_compression.hard_threshold_chars", 60000)),
-            60000,
-        )
-        compression["hard_threshold_tokens"] = as_int(
-            self._cfg("compression.weak_force_tokens",
-                      self._cfg("weak_compression.hard_threshold_tokens", 33000)),
-            33000,
-        )
         compression["min_chars"] = as_int(
             self._cfg("compression.weak_min_chars",
                       self._cfg("weak_compression.min_chars", 8000)),
