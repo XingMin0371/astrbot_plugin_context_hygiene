@@ -2,7 +2,7 @@ name: astrbot_plugin_context_hygiene
 display_name: 节省上下文
 short_desc: 修复 LLM 工具结构导致的 400 响应错误
 desc: 修复空 tool_calls、非法工具调用、缺失工具结果导致的 LLM 400 响应错误。
-version: v1.9.7
+version: v1.9.8
 author: DSH
 repo: https://github.com/XingMin0371/astrbot_plugin_context_hygiene
 astrbot_version: ">=4.29.0"
