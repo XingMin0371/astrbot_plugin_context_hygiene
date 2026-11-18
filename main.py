@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import copy
+from contextlib import contextmanager
 import hashlib
 import ipaddress
 import json
@@ -465,6 +466,64 @@ class ContextHygiene(Star):
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("context_hygiene: tool assignment skipped (%s)", type(exc).__name__)
+
+    @staticmethod
+    @contextmanager
+    def _compression_runtime_overrides(cfg: dict):
+        """Temporarily zero cache protection for an already-sliced candidate.
+
+        Values are captured from the supplied config and restored in finally,
+        never reset to hardcoded defaults.
+        """
+        compression = cfg.get("compression")
+        compression_created = not isinstance(compression, dict)
+        if compression_created:
+            compression = {}
+            cfg["compression"] = compression
+        basic = cfg.get("basic")
+        basic_created = not isinstance(basic, dict)
+        if basic_created:
+            basic = {}
+            cfg["basic"] = basic
+        original = {
+            "cache_prefix_messages": compression.get("cache_prefix_messages", None),
+            "cache_prefix_messages_present": "cache_prefix_messages" in compression,
+            "cache_friendly": compression.get("cache_friendly", None),
+            "cache_friendly_present": "cache_friendly" in compression,
+            "keep_recent_turns": basic.get("keep_recent_turns", None),
+            "keep_recent_turns_present": "keep_recent_turns" in basic,
+            "top_keep_recent_turns": cfg.get("keep_recent_turns", None),
+            "top_keep_recent_turns_present": "keep_recent_turns" in cfg,
+            "basic_created": basic_created,
+            "compression_created": compression_created,
+        }
+        compression["cache_prefix_messages"] = 0
+        compression["cache_friendly"] = False
+        basic["keep_recent_turns"] = 0
+        cfg["keep_recent_turns"] = 0
+        try:
+            yield
+        finally:
+            if original["cache_prefix_messages_present"]:
+                compression["cache_prefix_messages"] = original["cache_prefix_messages"]
+            else:
+                compression.pop("cache_prefix_messages", None)
+            if original["cache_friendly_present"]:
+                compression["cache_friendly"] = original["cache_friendly"]
+            else:
+                compression.pop("cache_friendly", None)
+            if original["keep_recent_turns_present"]:
+                basic["keep_recent_turns"] = original["keep_recent_turns"]
+            else:
+                basic.pop("keep_recent_turns", None)
+            if original["top_keep_recent_turns_present"]:
+                cfg["keep_recent_turns"] = original["top_keep_recent_turns"]
+            else:
+                cfg.pop("keep_recent_turns", None)
+            if original["basic_created"] and not basic:
+                cfg.pop("basic", None)
+            if original["compression_created"] and not compression:
+                cfg.pop("compression", None)
 
     def _clean_config(self) -> dict:
         """Keep tool cleanup single-owner when the memory plugin handles it."""
@@ -1626,17 +1685,14 @@ class ContextHygiene(Star):
             normal_done = False
             tools_cleaned = False
             if compress_allowed and candidate and normal_hit:
-                normal_cfg.setdefault("compression", {})["cache_prefix_messages"] = 0
-                normal_cfg["compression"]["cache_friendly"] = False
-                normal_cfg.setdefault("basic", {})["keep_recent_turns"] = 0
-                normal_cfg["keep_recent_turns"] = 0
-                for item in candidate:
-                    if isinstance(item, dict) and item.get("role") == "tool":
-                        normalize_message_lists([item])
-                cleaned, stats = clean_history(
-                    candidate, normal_cfg, skip_tool_images=True, normalize_lists=False,
-                    allow_ttl_cleanup=allow_ttl_cleanup,
-                )
+                with self._compression_runtime_overrides(normal_cfg):
+                    for item in candidate:
+                        if isinstance(item, dict) and item.get("role") == "tool":
+                            normalize_message_lists([item])
+                    cleaned, stats = clean_history(
+                        candidate, normal_cfg, skip_tool_images=True, normalize_lists=False,
+                        allow_ttl_cleanup=allow_ttl_cleanup,
+                    )
                 tools_cleaned = True
                 if stats.changed:
                     req.contexts = contexts[:normal_prefix] + cleaned + contexts[protected_start:]
@@ -1665,15 +1721,11 @@ class ContextHygiene(Star):
                     umo, contexts, now, guard_minutes=max(0, guard // 2), force=True
                 )
             if compress_allowed and not normal_done and weak_end > prefix_n:
-                compression = cfg.setdefault("compression", {})
-                compression["cache_prefix_messages"] = 0
-                compression["cache_friendly"] = False
-                cfg.setdefault("basic", {})["keep_recent_turns"] = 0
-                cfg["keep_recent_turns"] = 0
-                cleaned, stats = clean_history(
-                    contexts[prefix_n:weak_end], cfg, skip_tool_images=True,
-                    allow_ttl_cleanup=allow_ttl_cleanup,
-                )
+                with self._compression_runtime_overrides(cfg):
+                    cleaned, stats = clean_history(
+                        contexts[prefix_n:weak_end], cfg, skip_tool_images=True,
+                        allow_ttl_cleanup=allow_ttl_cleanup,
+                    )
                 tools_cleaned = True
                 if stats.changed:
                     req.contexts = contexts[:prefix_n] + cleaned + contexts[weak_end:]
